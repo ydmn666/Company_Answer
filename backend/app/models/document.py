@@ -1,0 +1,25 @@
+from datetime import datetime
+from uuid import uuid4
+
+from sqlalchemy import DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+
+from app.db.base import Base
+
+
+class Document(Base):
+    __tablename__ = "documents"
+
+    # documents 保存文档级元信息。
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    owner_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("users.id"), nullable=True)
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    filename: Mapped[str] = mapped_column(String(255), nullable=False)
+    content_type: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    status: Mapped[str] = mapped_column(String(50), default="indexed", nullable=False)
+    summary: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    chunk_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+
+    # 一个文档会拆成多个切片。
+    chunks = relationship("DocumentChunk", back_populates="document", cascade="all, delete-orphan")
