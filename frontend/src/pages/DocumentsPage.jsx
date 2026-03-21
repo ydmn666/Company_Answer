@@ -1,8 +1,15 @@
-import { EyeOutlined, FileTextOutlined, SearchOutlined, UploadOutlined } from "@ant-design/icons";
+import {
+  DeleteOutlined,
+  EditOutlined,
+  EyeOutlined,
+  FileTextOutlined,
+  SearchOutlined,
+  UploadOutlined,
+} from "@ant-design/icons";
 import { useEffect, useMemo, useState } from "react";
-import { Button, Drawer, Empty, Input, Space, Tag, Typography, message } from "antd";
+import { Button, Drawer, Empty, Form, Input, Modal, Space, Tag, Typography, message } from "antd";
 import { useNavigate } from "react-router-dom";
-import { fetchDocument, fetchDocuments } from "../api/documents";
+import { deleteDocument, fetchDocument, fetchDocuments, updateDocument } from "../api/documents";
 import { SectionCard } from "../components/SectionCard";
 
 export function DocumentsPage() {
@@ -11,11 +18,20 @@ export function DocumentsPage() {
   const [keyword, setKeyword] = useState("");
   const [detailOpen, setDetailOpen] = useState(false);
   const [selectedDocument, setSelectedDocument] = useState(null);
+  const [editingDocument, setEditingDocument] = useState(null);
+  const [form] = Form.useForm();
+
+  const loadDocuments = async (query = "") => {
+    try {
+      const data = await fetchDocuments(query);
+      setDocuments(data.items || []);
+    } catch {
+      message.error("文档列表加载失败。");
+    }
+  };
 
   useEffect(() => {
-    fetchDocuments()
-      .then((data) => setDocuments(data.items || []))
-      .catch(() => message.error("文档列表加载失败。"));
+    loadDocuments();
   }, []);
 
   const filtered = useMemo(() => {
@@ -38,12 +54,51 @@ export function DocumentsPage() {
     }
   };
 
+  const openEdit = (document) => {
+    setEditingDocument(document);
+    form.setFieldsValue({
+      title: document.title,
+      summary: document.summary,
+    });
+  };
+
+  const handleSaveDocument = async () => {
+    try {
+      const values = await form.validateFields();
+      const updated = await updateDocument(editingDocument.id, values);
+      setEditingDocument(null);
+      setSelectedDocument((current) => (current?.id === updated.id ? updated : current));
+      message.success("文档信息已更新。");
+      await loadDocuments(keyword);
+    } catch (error) {
+      if (error?.errorFields) return;
+      message.error("文档更新失败。");
+    }
+  };
+
+  const handleDeleteDocument = (document) => {
+    Modal.confirm({
+      title: "删除文档",
+      content: "删除后该文档及其切片会被移除，相关历史引用可能无法继续查看。",
+      okButtonProps: { danger: true },
+      onOk: async () => {
+        await deleteDocument(document.id);
+        message.success("文档已删除。");
+        if (selectedDocument?.id === document.id) {
+          setSelectedDocument(null);
+          setDetailOpen(false);
+        }
+        await loadDocuments(keyword);
+      },
+    });
+  };
+
   return (
     <div className="workspace-page-shell documents-shell">
       <div className="page-topbar documents-topbar">
         <div className="page-title-group">
           <Space size="middle" wrap>
-            <Typography.Title level={4}>管理文档</Typography.Title>
+            <Typography.Title level={4}>文档管理</Typography.Title>
             <Tag bordered={false} className="subtle-tag">文档数 {documents.length}</Tag>
             <Tag bordered={false} className="subtle-tag">切片数 {totalChunks}</Tag>
           </Space>
@@ -81,19 +136,26 @@ export function DocumentsPage() {
                       <Tag bordered={false} className="chip-tag">{item.status}</Tag>
                     </Space>
 
-                    <Button icon={<EyeOutlined />} onClick={() => openDetail(item.id)}>
-                      查看详情
-                    </Button>
+                    <Space wrap>
+                      <Button icon={<EyeOutlined />} onClick={() => openDetail(item.id)}>
+                        查看详情
+                      </Button>
+                      <Button icon={<EditOutlined />} onClick={() => openEdit(item)}>
+                        修改
+                      </Button>
+                      <Button danger icon={<DeleteOutlined />} onClick={() => handleDeleteDocument(item)}>
+                        删除
+                      </Button>
+                    </Space>
                   </div>
 
-                  <Typography.Paragraph className="document-record-summary">
-                    {item.summary}
-                  </Typography.Paragraph>
+                  <Typography.Paragraph className="document-record-summary">{item.summary}</Typography.Paragraph>
 
                   <div className="document-meta-line">
                     <span>{item.filename}</span>
                     <span>{item.chunk_count} 个切片</span>
-                    <span>{new Date(item.created_at).toLocaleString()}</span>
+                    <span>创建于 {new Date(item.created_at).toLocaleString()}</span>
+                    <span>更新于 {new Date(item.updated_at).toLocaleString()}</span>
                   </div>
                 </article>
               ))}
@@ -106,7 +168,7 @@ export function DocumentsPage() {
 
       <Drawer
         title={selectedDocument?.title || "文档详情"}
-        width={720}
+        width={760}
         open={detailOpen}
         onClose={() => setDetailOpen(false)}
       >
@@ -123,10 +185,11 @@ export function DocumentsPage() {
               </div>
             </div>
 
-            <SectionCard title="基础信息" subtitle="来源与摘要">
+            <SectionCard title="基础信息" subtitle="来源、摘要与更新时间">
               <Space direction="vertical" size="small" style={{ width: "100%" }}>
                 <Typography.Text>文件名：{selectedDocument.filename}</Typography.Text>
                 <Typography.Text>文件类型：{selectedDocument.content_type || "未知"}</Typography.Text>
+                <Typography.Text>更新时间：{new Date(selectedDocument.updated_at).toLocaleString()}</Typography.Text>
                 <Typography.Paragraph>{selectedDocument.summary}</Typography.Paragraph>
               </Space>
             </SectionCard>
@@ -135,7 +198,17 @@ export function DocumentsPage() {
               <Space direction="vertical" size="middle" style={{ width: "100%" }}>
                 {selectedDocument.chunks.map((chunk) => (
                   <div className="reference-card" key={chunk.id}>
-                    <Typography.Text strong>切片 {chunk.chunk_index + 1}</Typography.Text>
+                    <Space wrap>
+                      <Typography.Text strong>切片 {chunk.chunk_index + 1}</Typography.Text>
+                      <Tag bordered={false} className="subtle-tag">{chunk.chunk_type}</Tag>
+                      {chunk.section_title ? (
+                        <Tag bordered={false} className="subtle-tag">{chunk.section_title}</Tag>
+                      ) : null}
+                      {chunk.page_no ? (
+                        <Tag bordered={false} className="subtle-tag">第 {chunk.page_no} 页</Tag>
+                      ) : null}
+                      <Tag bordered={false} className="subtle-tag">{chunk.token_count} tokens</Tag>
+                    </Space>
                     <Typography.Paragraph>{chunk.content}</Typography.Paragraph>
                   </div>
                 ))}
@@ -144,6 +217,23 @@ export function DocumentsPage() {
           </Space>
         ) : null}
       </Drawer>
+
+      <Modal
+        title="修改文档信息"
+        open={Boolean(editingDocument)}
+        onCancel={() => setEditingDocument(null)}
+        onOk={handleSaveDocument}
+        okText="保存"
+      >
+        <Form form={form} layout="vertical">
+          <Form.Item label="文档标题" name="title" rules={[{ required: true, message: "请输入文档标题。" }]}>
+            <Input />
+          </Form.Item>
+          <Form.Item label="文档摘要" name="summary" rules={[{ required: true, message: "请输入文档摘要。" }]}>
+            <Input.TextArea rows={5} />
+          </Form.Item>
+        </Form>
+      </Modal>
     </div>
   );
 }

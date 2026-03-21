@@ -1,47 +1,24 @@
-import math
+import json
 import re
-from collections import Counter
+from collections.abc import Iterator
 
 import httpx
 
 from app.core.config import settings
+from app.services.retrieval_service import tokenize
 
 
-TOKEN_PATTERN = re.compile(r"[\u4e00-\u9fff]+|[A-Za-z0-9_]+")
 SENTENCE_SPLIT_PATTERN = re.compile(r"(?<=[。！？；;.!?])")
-EMBEDDING_DIM = 8
-
-
-def _tokenize(text: str) -> list[str]:
-    return [token.lower() for token in TOKEN_PATTERN.findall(text)]
-
-
-def generate_embedding(text: str) -> list[float]:
-    # 当前 V1 的 embedding 是轻量本地实现，
-    # 目标是先打通“向量检索链路”。
-    tokens = _tokenize(text)
-    if not tokens:
-        return [0.0] * EMBEDDING_DIM
-
-    counter = Counter(tokens)
-    vector = [0.0] * EMBEDDING_DIM
-    for token, count in counter.items():
-        vector[hash(token) % EMBEDDING_DIM] += float(count)
-
-    norm = math.sqrt(sum(value * value for value in vector)) or 1.0
-    return [round(value / norm, 6) for value in vector]
 
 
 def _sentence_score(question_tokens: set[str], sentence: str) -> int:
-    sentence_tokens = set(_tokenize(sentence))
+    sentence_tokens = set(tokenize(sentence))
     return len(question_tokens & sentence_tokens)
 
 
 def _local_chat_completion(messages: list[dict], context: list[dict]) -> str:
-    # 本地回退回答逻辑：
-    # 没配云模型，或云模型失败时，会从引用片段里抽取句子回答。
     question = messages[-1]["content"] if messages else ""
-    question_tokens = set(_tokenize(question))
+    question_tokens = set(tokenize(question))
     candidate_sentences: list[tuple[int, str, str]] = []
 
     for item in context:
@@ -78,7 +55,6 @@ def _resolve_provider(provider: str | None) -> str:
 
 
 def _provider_config(provider: str) -> tuple[str, str, str] | None:
-    # 按 provider 取模型连接配置。
     if provider == "deepseek":
         if not settings.deepseek_api_key:
             return None
@@ -93,18 +69,29 @@ def _provider_config(provider: str) -> tuple[str, str, str] | None:
 
 
 def _build_context_text(context: list[dict]) -> str:
-    # 把检索片段拼成大模型更容易消费的上下文文本。
     parts = []
     for index, item in enumerate(context, start=1):
-        parts.append(f"[{index}] 文档：{item['document_title']}\n片段：{item['snippet']}")
+        page_suffix = f"\n页码：{item['page_no']}" if item.get("page_no") else ""
+        section_suffix = f"\n章节：{item['section_title']}" if item.get("section_title") else ""
+        parts.append(f"[{index}] 文档：{item['document_title']}{page_suffix}{section_suffix}\n片段：{item['snippet']}")
     return "\n\n".join(parts)
 
 
-def _remote_chat_completion(provider: str, messages: list[dict], context: list[dict]) -> tuple[str, str]:
-    # 真正调用云端模型的地方。
+def _system_prompt() -> str:
+    return (
+        "你是企业知识检索系统中的问答助手。"
+        "你必须严格依据提供的文档片段回答，使用简洁中文。"
+        "如果文档中没有足够信息，请明确说明无法确认，不要编造。"
+        "回答时先直接给结论，再用一句话说明依据。"
+        "引用依据时优先使用文档标题或文档编号，不要虚构来源。"
+    )
+
+
+def _stream_remote_chat_completion(provider: str, messages: list[dict], context: list[dict]) -> tuple[Iterator[str], str]:
     config = _provider_config(provider)
     if not config:
-        return _local_chat_completion(messages, context), "local"
+        answer = _local_chat_completion(messages, context)
+        return iter([answer]), "local"
 
     api_key, base_url, model = config
     question = messages[-1]["content"] if messages else ""
@@ -112,53 +99,76 @@ def _remote_chat_completion(provider: str, messages: list[dict], context: list[d
     payload = {
         "model": model,
         "temperature": 0.2,
+        "stream": True,
         "messages": [
-            {
-                "role": "system",
-                "content": (
-                    "你是企业知识检索系统中的问答助手。"
-                    "你必须严格根据提供的文档片段回答，使用简洁中文。"
-                    "如果文档中没有足够信息，请明确说无法确认，不要编造。"
-                    "回答时优先直接给出结论，再补一句依据。"
-                ),
-            },
-            {
-                "role": "user",
-                "content": f"问题：{question}\n\n可用文档片段：\n{context_text}",
-            },
+            {"role": "system", "content": _system_prompt()},
+            {"role": "user", "content": f"问题：{question}\n\n可用文档片段：\n{context_text}"},
         ],
     }
 
-    try:
-        response = httpx.post(
-            f"{base_url}/chat/completions",
-            headers={
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json",
-            },
-            json=payload,
-            timeout=30.0,
-        )
-        response.raise_for_status()
-        data = response.json()
-        content = data["choices"][0]["message"]["content"].strip()
-        if not content:
-            raise ValueError("Empty model response")
-        return content, provider
-    except Exception:
-        return _local_chat_completion(messages, context), "local"
+    def generate() -> Iterator[str]:
+        try:
+            with httpx.stream(
+                "POST",
+                f"{base_url}/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
+                json=payload,
+                timeout=60.0,
+            ) as response:
+                response.raise_for_status()
+                for raw_line in response.iter_lines():
+                    if not raw_line:
+                        continue
+                    line = raw_line.strip()
+                    if not line.startswith("data:"):
+                        continue
+                    body = line[5:].strip()
+                    if body == "[DONE]":
+                        break
+
+                    try:
+                        data = json.loads(body)
+                    except json.JSONDecodeError:
+                        continue
+
+                    delta = data.get("choices", [{}])[0].get("delta", {})
+                    content = delta.get("content")
+                    if isinstance(content, str) and content:
+                        yield content
+                    elif isinstance(content, list):
+                        for item in content:
+                            text = item.get("text") if isinstance(item, dict) else None
+                            if text:
+                                yield text
+        except Exception:
+            yield _local_chat_completion(messages, context)
+
+    return generate(), provider
+
+
+def _remote_chat_completion(provider: str, messages: list[dict], context: list[dict]) -> tuple[str, str]:
+    stream, provider_used = _stream_remote_chat_completion(provider, messages, context)
+    return "".join(stream).strip(), provider_used
 
 
 def chat_completion(messages: list[dict], context: list[dict], provider: str | None = None) -> tuple[str, str]:
-    # 统一的回答入口，屏蔽前端对 provider 的感知差异。
     resolved_provider = _resolve_provider(provider)
     if resolved_provider == "local":
         return _local_chat_completion(messages, context), "local"
     return _remote_chat_completion(resolved_provider, messages, context)
 
 
+def stream_chat_completion(messages: list[dict], context: list[dict], provider: str | None = None) -> tuple[Iterator[str], str]:
+    resolved_provider = _resolve_provider(provider)
+    if resolved_provider == "local":
+        return iter([_local_chat_completion(messages, context)]), "local"
+    return _stream_remote_chat_completion(resolved_provider, messages, context)
+
+
 def answer_with_rag(question: str, chunks: list[dict], provider: str | None = None) -> dict:
-    # RAG 封装：输入问题 + 检索片段，输出答案 + 引用。
     answer, provider_used = chat_completion([{"role": "user", "content": question}], chunks, provider)
     citations = [
         {
@@ -166,6 +176,7 @@ def answer_with_rag(question: str, chunks: list[dict], provider: str | None = No
             "document_id": item["document_id"],
             "document_title": item["document_title"],
             "snippet": item["snippet"],
+            "page_no": item.get("page_no"),
         }
         for item in chunks[:3]
     ]

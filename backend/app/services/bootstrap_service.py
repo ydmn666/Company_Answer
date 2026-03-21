@@ -5,7 +5,7 @@ from app.models.chat_session import ChatSession
 from app.models.document import Document
 from app.models.document_chunk import DocumentChunk
 from app.models.user import User
-from app.services.llm_service import generate_embedding
+from app.services.retrieval_service import current_embedding_model_name, generate_embedding, tokenize
 
 
 def _ensure_user(
@@ -15,7 +15,6 @@ def _ensure_user(
     role: str,
     password: str = "password",
 ) -> User:
-    # 保证管理员和员工演示账号存在。
     user = db.query(User).filter(User.username == username).first()
     if not user:
         user = User(
@@ -42,7 +41,6 @@ def _ensure_document(
     filename: str,
     content: str,
 ) -> None:
-    # 保证演示文档存在，并提前写入切片和 embedding。
     existing = db.query(Document).filter(Document.title == title, Document.filename == filename).first()
     if existing:
         return
@@ -54,6 +52,7 @@ def _ensure_document(
         content_type="text/plain",
         status="indexed",
         summary=content[:140],
+        source_text=content,
         chunk_count=1,
     )
     db.add(document)
@@ -62,6 +61,9 @@ def _ensure_document(
         DocumentChunk(
             document_id=document.id,
             chunk_index=0,
+            chunk_type="paragraph",
+            token_count=len(tokenize(content)),
+            embedding_model=current_embedding_model_name(),
             content=content,
             embedding=generate_embedding(content),
         )
@@ -69,7 +71,6 @@ def _ensure_document(
 
 
 def _ensure_session(db: Session, user_id: str) -> None:
-    # 给演示员工预置一条会话，方便前端进入后立即看到历史记录。
     existing = (
         db.query(ChatSession)
         .filter(ChatSession.title == "核心系统访问要求", ChatSession.user_id == user_id)
@@ -93,10 +94,9 @@ def _ensure_session(db: Session, user_id: str) -> None:
 
 
 def _repair_session_titles(db: Session) -> None:
-    # 兼容历史乱码数据：如果旧标题损坏，就用第一条用户消息回填。
     sessions = db.query(ChatSession).all()
     for session in sessions:
-        if "?" not in session.title and "锟" not in session.title:
+        if "?" not in session.title and "閿" not in session.title:
             continue
         first_user_message = next(
             (item for item in sorted(session.messages, key=lambda value: value.created_at) if item.role == "user"),
@@ -107,7 +107,6 @@ def _repair_session_titles(db: Session) -> None:
 
 
 def seed_demo_data(db: Session) -> None:
-    # 启动时执行一次的演示数据引导。
     admin = _ensure_user(db, "admin", "System Admin", "admin")
     employee = _ensure_user(db, "employee", "Knowledge Employee", "employee")
 
@@ -123,7 +122,7 @@ def seed_demo_data(db: Session) -> None:
         admin.id,
         "IT 服务台手册",
         "helpdesk-handbook.txt",
-        "服务台执行密码重置前必须校验员工身份。所有高权限操作都需要工单编号和审计日志。",
+        "服务台执行密码重置前必须核验员工身份。所有高权限操作都需要工单编号和审计日志。",
     )
     _ensure_session(db, employee.id)
     _repair_session_titles(db)

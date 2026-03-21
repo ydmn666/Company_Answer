@@ -1,11 +1,23 @@
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user, require_admin
 from app.db.session import get_db
 from app.models.user import User
-from app.schemas.documents import DocumentDetailResponse, DocumentListResponse, UploadDocumentResponse
-from app.services.document_service import create_document, get_document, list_documents
+from app.schemas.documents import (
+    DocumentActionResponse,
+    DocumentDetailResponse,
+    DocumentListResponse,
+    UpdateDocumentRequest,
+    UploadDocumentResponse,
+)
+from app.services.document_service import (
+    create_document,
+    delete_document,
+    get_document,
+    list_documents,
+    update_document,
+)
 
 router = APIRouter()
 
@@ -17,7 +29,6 @@ async def upload_document(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_admin),
 ) -> UploadDocumentResponse:
-    # “知识入库链路”入口：上传 -> 解析 -> 切片 -> 向量化 -> 写库。
     content = await file.read()
     return create_document(
         db=db,
@@ -31,11 +42,11 @@ async def upload_document(
 
 @router.get("", response_model=DocumentListResponse)
 def get_documents(
+    query: str | None = Query(default=None),
     db: Session = Depends(get_db),
     _: User = Depends(require_admin),
 ) -> DocumentListResponse:
-    # 管理文档页列表数据。
-    return list_documents(db)
+    return list_documents(db, query)
 
 
 @router.get("/{document_id}", response_model=DocumentDetailResponse)
@@ -44,8 +55,32 @@ def get_document_by_id(
     db: Session = Depends(get_db),
     _: User = Depends(get_current_user),
 ) -> DocumentDetailResponse:
-    # 文档详情抽屉 / 引用详情都从这里取数。
     document = get_document(db, document_id)
     if not document:
         raise HTTPException(status_code=404, detail="Document not found")
     return document
+
+
+@router.patch("/{document_id}", response_model=DocumentDetailResponse)
+def patch_document(
+    document_id: str,
+    payload: UpdateDocumentRequest,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_admin),
+) -> DocumentDetailResponse:
+    document = update_document(db, document_id, payload)
+    if not document:
+        raise HTTPException(status_code=404, detail="Document not found")
+    return document
+
+
+@router.delete("/{document_id}", response_model=DocumentActionResponse)
+def remove_document(
+    document_id: str,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_admin),
+) -> DocumentActionResponse:
+    result = delete_document(db, document_id)
+    if not result:
+        raise HTTPException(status_code=404, detail="Document not found")
+    return result

@@ -11,13 +11,18 @@ from app.db.base import Base
 class DocumentChunk(Base):
     __tablename__ = "document_chunks"
 
-    # document_chunks 是知识检索核心表：
-    # 每条记录代表文档的一个切片，以及它对应的向量。
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
     document_id: Mapped[str] = mapped_column(String(36), ForeignKey("documents.id"), nullable=False, index=True)
     chunk_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    section_title: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    page_no: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    chunk_type: Mapped[str] = mapped_column(String(30), default="paragraph", nullable=False)
+    prev_chunk_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    next_chunk_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    token_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    embedding_model: Mapped[str | None] = mapped_column(String(120), nullable=True)
     content: Mapped[str] = mapped_column(Text, nullable=False)
-    embedding: Mapped[list[float] | None] = mapped_column(Vector(8), nullable=True)
+    embedding: Mapped[list[float] | None] = mapped_column(Vector(), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
 
     document = relationship("Document", back_populates="chunks")
