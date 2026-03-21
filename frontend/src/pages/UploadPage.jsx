@@ -7,7 +7,7 @@ import { SectionCard } from "../components/SectionCard";
 
 const uploadSteps = [
   { title: "上传文件", description: "提交文档标题与文件" },
-  { title: "解析内容", description: "提取文本并完成切分" },
+  { title: "解析内容", description: "提取文本并完成切片" },
   { title: "建立索引", description: "生成向量并写入知识库" },
 ];
 
@@ -34,7 +34,7 @@ export function UploadPage() {
       setStepIndex(1);
       setStepIndex(2);
       await uploadDocument(formData);
-      message.success("文档上传完成，已进入索引。");
+      message.success("文档上传完成，已写入索引。");
       setFileList([]);
       setStepIndex(3);
       setTimeout(() => navigate("/documents"), 800);
@@ -74,7 +74,7 @@ export function UploadPage() {
             <Form.Item
               label="文档标题"
               name="title"
-              rules={[{ required: true, message: "请输入文档标题" }]}
+              rules={[{ required: true, message: "请输入文档标题。" }]}
             >
               <Input placeholder="例如：季度安全制度汇编" />
             </Form.Item>
@@ -91,7 +91,7 @@ export function UploadPage() {
                   <InboxOutlined />
                 </p>
                 <Typography.Text strong>拖拽文件到此处，或点击选择文件</Typography.Text>
-                <Typography.Paragraph>当前版本支持文本类文件和 PDF。</Typography.Paragraph>
+                <Typography.Paragraph>当前版本支持文本、PDF 和 DOCX 文件。</Typography.Paragraph>
               </Upload.Dragger>
             </Form.Item>
 
@@ -130,7 +130,7 @@ export function UploadPage() {
                 <Tag bordered={false} className="chip-tag">制度规范</Tag>
                 <Tag bordered={false} className="chip-tag">员工手册</Tag>
                 <Tag bordered={false} className="chip-tag">操作流程</Tag>
-                <Tag bordered={false} className="chip-tag">工资报表</Tag>
+                <Tag bordered={false} className="chip-tag">标准说明</Tag>
               </Space>
             </div>
           </Space>

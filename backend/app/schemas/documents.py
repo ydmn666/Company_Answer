@@ -4,7 +4,6 @@ from pydantic import BaseModel
 
 
 class DocumentItem(BaseModel):
-    # 管理文档页单条记录。
     id: str
     title: str
     filename: str
@@ -12,6 +11,7 @@ class DocumentItem(BaseModel):
     summary: str
     chunk_count: int
     created_at: datetime
+    updated_at: datetime
 
     model_config = {"from_attributes": True}
 
@@ -21,21 +21,32 @@ class DocumentListResponse(BaseModel):
 
 
 class DocumentChunkItem(BaseModel):
-    # 文档详情页中的单个切片。
     id: str
     chunk_index: int
+    section_title: str | None = None
+    page_no: int | None = None
+    chunk_type: str
+    token_count: int
     content: str
 
 
 class DocumentDetailResponse(DocumentItem):
-    # 文档详情会额外带 content_type 和切片列表。
     content_type: str | None = None
     chunks: list[DocumentChunkItem]
 
 
 class UploadDocumentResponse(BaseModel):
-    # 上传完成后前端所需的最小回执。
     id: str
     title: str
     status: str
     chunk_count: int
+
+
+class UpdateDocumentRequest(BaseModel):
+    title: str | None = None
+    summary: str | None = None
+
+
+class DocumentActionResponse(BaseModel):
+    id: str
+    message: str

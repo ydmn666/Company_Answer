@@ -12,27 +12,46 @@ from app.models import chat_message, chat_session, document, document_chunk, use
 from app.services.bootstrap_service import seed_demo_data
 
 
-# 兼容旧库结构：如果 users 表没有 role 字段，就在启动时补齐。
-def ensure_schema_compatibility() -> None:
-    inspector = inspect(engine)
-    if not inspector.has_table("users"):
+def _ensure_column(inspector, table_name: str, column_name: str, definition: str) -> None:
+    if not inspector.has_table(table_name):
         return
 
-    user_columns = {column["name"] for column in inspector.get_columns("users")}
-    if "role" not in user_columns:
-        with engine.begin() as connection:
-            connection.execute(
-                text("ALTER TABLE users ADD COLUMN role VARCHAR(30) NOT NULL DEFAULT 'employee'")
-            )
+    columns = {column["name"] for column in inspector.get_columns(table_name)}
+    if column_name in columns:
+        return
+
+    with engine.begin() as connection:
+        connection.execute(text(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {definition}"))
+
+
+def ensure_schema_compatibility() -> None:
+    inspector = inspect(engine)
+
+    _ensure_column(inspector, "users", "role", "VARCHAR(30) NOT NULL DEFAULT 'employee'")
+    _ensure_column(inspector, "documents", "source_text", "TEXT NOT NULL DEFAULT ''")
+    _ensure_column(inspector, "documents", "updated_at", "TIMESTAMP NULL")
+    _ensure_column(inspector, "document_chunks", "section_title", "VARCHAR(255) NULL")
+    _ensure_column(inspector, "document_chunks", "page_no", "INTEGER NULL")
+    _ensure_column(inspector, "document_chunks", "chunk_type", "VARCHAR(30) NOT NULL DEFAULT 'paragraph'")
+    _ensure_column(inspector, "document_chunks", "prev_chunk_id", "VARCHAR(36) NULL")
+    _ensure_column(inspector, "document_chunks", "next_chunk_id", "VARCHAR(36) NULL")
+    _ensure_column(inspector, "document_chunks", "token_count", "INTEGER NOT NULL DEFAULT 0")
+    _ensure_column(inspector, "document_chunks", "embedding_model", "VARCHAR(120) NULL")
+    _ensure_column(inspector, "chat_sessions", "pinned", "BOOLEAN NOT NULL DEFAULT FALSE")
+    _ensure_column(inspector, "chat_sessions", "pinned_at", "TIMESTAMP NULL")
+    _ensure_column(inspector, "chat_sessions", "updated_at", "TIMESTAMP NULL")
+
+    with engine.begin() as connection:
+        connection.execute(text("ALTER TABLE document_chunks ALTER COLUMN embedding TYPE vector"))
+        connection.execute(text("UPDATE documents SET updated_at = created_at WHERE updated_at IS NULL"))
+        connection.execute(text("UPDATE chat_sessions SET updated_at = created_at WHERE updated_at IS NULL"))
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    # V1 阶段直接建表，避免引入迁移工具增加理解成本。
     Base.metadata.create_all(bind=engine)
     ensure_schema_compatibility()
 
-    # 写入演示数据，方便前端开箱即测。
     db = SessionLocal()
     try:
         seed_demo_data(db)
@@ -43,7 +62,7 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(
     title="Enterprise Knowledge Retrieval API",
-    version="0.1.0",
+    version="0.2.0",
     lifespan=lifespan,
 )
 
@@ -55,11 +74,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# 前端请求的 /api/* 都从这里挂出去。
 app.include_router(api_router, prefix="/api")
 
 
 @app.get("/health")
 def health_check() -> dict[str, str]:
-    # Docker / 探活检查接口。
     return {"status": "ok"}

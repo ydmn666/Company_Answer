@@ -1,19 +1,20 @@
 import {
   DownOutlined,
   EyeOutlined,
+  LoadingOutlined,
   PlusOutlined,
   SendOutlined,
 } from "@ant-design/icons";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Button, Drawer, Dropdown, Empty, Input, Space, Tag, Typography, message } from "antd";
 import { useSearchParams } from "react-router-dom";
-import { askQuestion, fetchSession, fetchSessions } from "../api/chat";
+import { askQuestionStream, fetchSession, fetchSessions } from "../api/chat";
 import { fetchDocument } from "../api/documents";
 import { SectionCard } from "../components/SectionCard";
 import { useChatStore } from "../store/chat";
 
 function summarizeCitation(snippet) {
-  const cleaned = snippet.replace(/\s+/g, " ").trim();
+  const cleaned = (snippet || "").replace(/\s+/g, " ").trim();
   if (cleaned.length <= 88) return cleaned;
   return `${cleaned.slice(0, 88)}...`;
 }
@@ -23,12 +24,18 @@ export function ChatPage() {
   const [provider, setProvider] = useState(localStorage.getItem("knowledge-provider") || "local");
   const [question, setQuestion] = useState("");
   const [loading, setLoading] = useState(false);
-  const [sessions, setSessions] = useState([]);
   const [detailOpen, setDetailOpen] = useState(false);
   const [selectedCitation, setSelectedCitation] = useState(null);
   const [selectedDocument, setSelectedDocument] = useState(null);
   const [attachedFile, setAttachedFile] = useState(null);
+  const [streamingAnswer, setStreamingAnswer] = useState("");
+  const [streamingProvider, setStreamingProvider] = useState("");
+  const [pendingCitations, setPendingCitations] = useState([]);
   const fileInputRef = useRef(null);
+  const streamRef = useRef(null);
+  const messagesEndRef = useRef(null);
+  const sendingRef = useRef(false);
+
   const messages = useChatStore((state) => state.messages);
   const activeSessionId = useChatStore((state) => state.activeSessionId);
   const appendMessage = useChatStore((state) => state.appendMessage);
@@ -37,17 +44,21 @@ export function ChatPage() {
   const setActiveSessionId = useChatStore((state) => state.setActiveSessionId);
 
   const citations = useMemo(() => {
+    if (loading && pendingCitations.length) {
+      return pendingCitations;
+    }
     const latestAssistant = [...messages]
       .reverse()
       .find((item) => item.role === "assistant" && item.citations?.length);
     return latestAssistant?.citations || [];
-  }, [messages]);
+  }, [loading, messages, pendingCitations]);
 
   useEffect(() => {
-    fetchSessions()
-      .then((data) => setSessions(data || []))
-      .catch(() => message.error("会话列表加载失败。"));
-  }, []);
+    const container = streamRef.current;
+    if (!container) return;
+    container.scrollTo({ top: container.scrollHeight, behavior: "smooth" });
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+  }, [messages.length, loading]);
 
   useEffect(() => {
     const isNewSession = searchParams.get("new");
@@ -85,42 +96,59 @@ export function ChatPage() {
       .catch(() => message.error("会话加载失败。"));
   }, [searchParams, resetMessages, setActiveSessionId, setMessages]);
 
-  const startFreshSession = () => {
-    setSearchParams({ new: "1" });
-    setActiveSessionId(null);
-    resetMessages();
-    setQuestion("");
-    setSelectedCitation(null);
-    setSelectedDocument(null);
-    setDetailOpen(false);
-    setAttachedFile(null);
-  };
-
   const handleAsk = async () => {
     const trimmed = question.trim();
-    if (!trimmed) return;
+    if (!trimmed || sendingRef.current || loading) return;
 
+    sendingRef.current = true;
     setLoading(true);
+    setStreamingAnswer("");
+    setStreamingProvider("");
+    setPendingCitations([]);
     appendMessage({ role: "user", content: trimmed });
+    setQuestion("");
 
     try {
-      const result = await askQuestion({ question: trimmed, session_id: activeSessionId, provider });
-      appendMessage({
-        role: "assistant",
-        content: result.answer,
-        citations: result.citations,
-        provider_used: result.provider_used,
-      });
-      setActiveSessionId(result.session_id);
-      setSearchParams({ session: result.session_id });
-      const nextSessions = await fetchSessions();
-      setSessions(nextSessions || []);
-      setQuestion("");
+      await askQuestionStream(
+        { question: trimmed, session_id: activeSessionId, provider },
+        {
+          onSession: ({ session_id: sessionId }) => {
+            if (!sessionId) return;
+            setActiveSessionId(sessionId);
+            setSearchParams({ session: sessionId });
+          },
+          onCitations: (citationsPayload) => {
+            setPendingCitations(citationsPayload);
+          },
+          onToken: (content) => {
+            setStreamingProvider(provider);
+            setStreamingAnswer((current) => current + content);
+          },
+          onDone: (result) => {
+            appendMessage({
+              role: "assistant",
+              content: result.answer,
+              citations: result.citations,
+              provider_used: result.provider_used,
+            });
+            setStreamingAnswer("");
+            setStreamingProvider("");
+            setPendingCitations([]);
+          },
+          onError: ({ detail }) => {
+            throw new Error(detail || "提问失败，请稍后重试。");
+          },
+        },
+      );
       setAttachedFile(null);
     } catch (error) {
-      const detail = error.response?.data?.detail;
-      message.error(detail || "提问失败，请稍后重试。");
+      message.error(error.message || "提问失败，请稍后重试。");
+      setQuestion(trimmed);
+      setStreamingAnswer("");
+      setStreamingProvider("");
+      setPendingCitations([]);
     } finally {
+      sendingRef.current = false;
       setLoading(false);
     }
   };
@@ -146,8 +174,8 @@ export function ChatPage() {
     <div className="workspace-page-shell knowledge-chat-shell">
       <div className="knowledge-chat-grid">
         <SectionCard className="page-fill-card knowledge-chat-card" bodyClassName="knowledge-chat-card-body">
-          <div className="knowledge-chat-stream">
-            {messages.length ? (
+          <div className="knowledge-chat-stream" ref={streamRef}>
+            {messages.length || loading ? (
               <div className="message-thread">
                 {messages.map((item, index) => (
                   <div key={`${item.role}-${index}`} className={`chat-row ${item.role}`}>
@@ -170,6 +198,29 @@ export function ChatPage() {
                     )}
                   </div>
                 ))}
+
+                {loading ? (
+                  <div className="chat-row assistant">
+                    <article className="assistant-block pending-answer">
+                      <div className="assistant-meta">
+                        <Typography.Text className="assistant-label">处理中</Typography.Text>
+                        {streamingProvider ? (
+                          <Tag bordered={false} className="subtle-tag subtle-model-tag">
+                            {streamingProvider}
+                          </Tag>
+                        ) : null}
+                        <Tag bordered={false} className="subtle-tag subtle-model-tag icon-tag">
+                          <LoadingOutlined spin />
+                        </Tag>
+                      </div>
+                      <Typography.Paragraph>
+                        {streamingAnswer || "正在检索文档并生成回答，请稍候。首次提问会更慢一些。"}
+                      </Typography.Paragraph>
+                    </article>
+                  </div>
+                ) : null}
+
+                <div ref={messagesEndRef} />
               </div>
             ) : (
               <div className="chat-empty-state">
@@ -187,13 +238,14 @@ export function ChatPage() {
                 className="composer-textarea"
                 autoSize={{ minRows: 2, maxRows: 5 }}
                 value={question}
+                disabled={loading}
                 onChange={(event) => setQuestion(event.target.value)}
                 onPressEnter={(event) => {
-                  if (event.shiftKey) return;
+                  if (event.shiftKey || loading || sendingRef.current) return;
                   event.preventDefault();
                   handleAsk();
                 }}
-                placeholder="开始知识问答"
+                placeholder={loading ? "正在生成回答，请稍候..." : "开始知识问答..."}
               />
 
               {attachedFile ? (
@@ -210,6 +262,7 @@ export function ChatPage() {
                     ref={fileInputRef}
                     type="file"
                     hidden
+                    disabled={loading}
                     onChange={(event) => {
                       const file = event.target.files?.[0] || null;
                       setAttachedFile(file);
@@ -219,6 +272,7 @@ export function ChatPage() {
                     type="text"
                     className="composer-tool-btn icon-only"
                     icon={<PlusOutlined />}
+                    disabled={loading}
                     onClick={() => fileInputRef.current?.click()}
                   />
                   <Dropdown
@@ -231,8 +285,9 @@ export function ChatPage() {
                       },
                     }}
                     trigger={["click"]}
+                    disabled={loading}
                   >
-                    <Button type="text" className="composer-tool-btn">
+                    <Button type="text" className="composer-tool-btn" disabled={loading}>
                       <Space size={6}>
                         {providerItems.find((item) => item.key === provider)?.label || "模型"}
                         <DownOutlined />
@@ -245,8 +300,9 @@ export function ChatPage() {
                   type="primary"
                   shape="circle"
                   className="composer-send"
-                  icon={<SendOutlined />}
+                  icon={loading ? <LoadingOutlined spin /> : <SendOutlined />}
                   loading={loading}
+                  disabled={loading || sendingRef.current || !question.trim()}
                   onClick={handleAsk}
                 />
               </div>
@@ -270,11 +326,14 @@ export function ChatPage() {
                       查看
                     </Button>
                   </div>
-                  <Typography.Paragraph>{summarizeCitation(citation.snippet)}</Typography.Paragraph>
+                  <Typography.Paragraph>
+                    {summarizeCitation(citation.snippet)}
+                    {citation.page_no ? ` 第 ${citation.page_no} 页` : ""}
+                  </Typography.Paragraph>
                 </article>
               ))
             ) : (
-              <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="回答命中内容后，这里会展示对应的引用依据。" />
+              <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="回答命中文档后，这里会展示对应的引用依据。" />
             )}
           </div>
         </SectionCard>
@@ -289,7 +348,10 @@ export function ChatPage() {
         {selectedDocument ? (
           <Space direction="vertical" size="large" style={{ width: "100%" }}>
             <SectionCard title="命中片段" subtitle="当前回答直接引用的文本内容">
-              <Typography.Paragraph>{selectedCitation?.snippet}</Typography.Paragraph>
+              <Typography.Paragraph>
+                {selectedCitation?.snippet}
+                {selectedCitation?.page_no ? `（第 ${selectedCitation.page_no} 页）` : ""}
+              </Typography.Paragraph>
             </SectionCard>
 
             <SectionCard title="文档详情" subtitle="原始文档摘要与切片内容">
@@ -298,7 +360,19 @@ export function ChatPage() {
                 <Typography.Paragraph>{selectedDocument.summary}</Typography.Paragraph>
                 {selectedDocument.chunks.map((chunk) => (
                   <div key={chunk.id} className="reference-card">
-                    <Typography.Text strong>切片 {chunk.chunk_index + 1}</Typography.Text>
+                    <Space wrap>
+                      <Typography.Text strong>切片 {chunk.chunk_index + 1}</Typography.Text>
+                      {chunk.page_no ? (
+                        <Tag bordered={false} className="subtle-tag">
+                          第 {chunk.page_no} 页
+                        </Tag>
+                      ) : null}
+                      {chunk.section_title ? (
+                        <Tag bordered={false} className="subtle-tag">
+                          {chunk.section_title}
+                        </Tag>
+                      ) : null}
+                    </Space>
                     <Typography.Paragraph>{chunk.content}</Typography.Paragraph>
                   </div>
                 ))}

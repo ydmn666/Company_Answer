@@ -1,0 +1,32 @@
+[
+  {
+    "question": "核心系统访问前需要满足哪些要求？",
+    "relevant_documents": ["员工安全制度"],
+    "expected_answer_keywords": ["多因素认证", "权限审批"]
+  },
+  {
+    "question": "发现安全事件后需要在多久内上报？",
+    "relevant_documents": ["员工安全制度"],
+    "expected_answer_keywords": ["30分钟", "上报"]
+  },
+  {
+    "question": "工程师访问生产系统之前需要完成什么审批？",
+    "relevant_documents": ["员工安全制度"],
+    "expected_answer_keywords": ["权限审批"]
+  },
+  {
+    "question": "服务台执行密码重置之前要先做什么？",
+    "relevant_documents": ["IT 服务台手册"],
+    "expected_answer_keywords": ["核验", "员工身份"]
+  },
+  {
+    "question": "高权限操作需要补充哪些记录？",
+    "relevant_documents": ["IT 服务台手册"],
+    "expected_answer_keywords": ["工单编号", "审计日志"]
+  },
+  {
+    "question": "和密码重置有关的身份校验要求是什么？",
+    "relevant_documents": ["IT 服务台手册"],
+    "expected_answer_keywords": ["核验", "身份"]
+  }
+]
