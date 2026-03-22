@@ -12,6 +12,10 @@ import { useNavigate } from "react-router-dom";
 import { deleteDocument, fetchDocument, fetchDocuments, updateDocument } from "../api/documents";
 import { SectionCard } from "../components/SectionCard";
 
+function isAbortError(error) {
+  return error?.name === "AbortError" || error?.code === "ERR_CANCELED";
+}
+
 export function DocumentsPage() {
   const navigate = useNavigate();
   const [documents, setDocuments] = useState([]);
@@ -21,17 +25,20 @@ export function DocumentsPage() {
   const [editingDocument, setEditingDocument] = useState(null);
   const [form] = Form.useForm();
 
-  const loadDocuments = async (query = "") => {
+  const loadDocuments = async (query = "", signal) => {
     try {
-      const data = await fetchDocuments(query);
+      const data = await fetchDocuments(query, { signal });
       setDocuments(data.items || []);
-    } catch {
+    } catch (error) {
+      if (isAbortError(error)) return;
       message.error("文档列表加载失败。");
     }
   };
 
   useEffect(() => {
-    loadDocuments();
+    const controller = new AbortController();
+    loadDocuments("", controller.signal);
+    return () => controller.abort();
   }, []);
 
   const filtered = useMemo(() => {
@@ -49,7 +56,8 @@ export function DocumentsPage() {
       const detail = await fetchDocument(documentId);
       setSelectedDocument(detail);
       setDetailOpen(true);
-    } catch {
+    } catch (error) {
+      if (isAbortError(error)) return;
       message.error("文档详情加载失败。");
     }
   };

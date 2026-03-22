@@ -1,34 +1,27 @@
-# 企业知识检索系统 V2
+# 企业知识检索系统 V3.0
 
-这是一个面向企业内部知识问答场景的 RAG 应用项目。`V2` 在 `V1` 最小可运行原型的基础上，补齐了检索底座、缓存、流式回答、文档管理和会话管理等核心能力，已经可以作为一版完整的阶段成果继续向 `V3` 演进。
+这是一个面向企业内部知识问答场景的 RAG 项目。`V3.0` 在 `V2` 的混合检索、流式回答、文档解析和会话管理基础上，补上了多轮问答的核心能力，并对上传、检索稳定性和前端交互做了收口。
 
-## V2 核心升级
+## V3.0 核心能力
 
-- 混合检索：`embedding（文字转向量数字）` + `BM25（关键词检索）` + `reranker（精排模型）`
-- 向量检索开始下推到数据库侧，减少 Python 层全量扫描
-- Redis 问答缓存，重复问题命中后可直接返回
-- DeepSeek / Kimi / local 三种回答 provider，支持流式输出
-- PDF / DOCX / TXT 基础解析，PDF 失败时支持 OCR 回退
-- 更贴近真实场景的会话管理：重命名、置顶、删除
-- 更贴近真实场景的文档管理：查看、编辑、删除
-- 离线评测脚本与评测集初版，支持 `Recall@K / MRR / nDCG / Answer Hit Rate`
+- 混合检索：`embedding（文本向量） + BM25（关键词检索） + reranker（精排模型）`
+- 多轮问答增强：支持轻量问题改写、上下文继承、连续追问
+- 流式回答：支持 `DeepSeek / Kimi / local`
+- 文档解析：支持 `TXT / PDF / DOCX`，PDF 失败时支持 OCR 回退
+- 文档管理：查看、编辑、删除、批量上传
+- 会话管理：新建、重命名、置顶、删除
+- 引用面板：回答时展示对应证据切片
+- 本地模型缓存：支持 Hugging Face 模型目录持久化和离线运行
 
-## 当前定位
+## V3.0 相比 V2 的更新
 
-`V2` 的重点是把系统从“能演示的原型”升级成“检索链路、交互链路和工程底座更完整的版本”。
-
-当前更适合：
-
-- 企业制度、手册、简历、FAQ 类文档
-- 明确事实型问题
-- 单轮或轻量多轮问答
-
-当前仍待 `V3` 继续增强：
-
-- 更强的问题理解
-- 多轮上下文继承
-- 长文档 / 论文类问答
-- 回答中的引用与右侧证据更强绑定
+- 增加问题理解：对短追问做轻量 `query rewrite（问题改写）`
+- 增加上下文处理：回答时继承最近多轮消息
+- 增加多轮问答能力：同一主题下支持连续追问
+- 修复新会话首问时的时序问题，避免会话瞬间消失
+- 上传页支持一次选择多个文件并批量建立索引
+- 启动时不再注入默认 demo 文档，文档管理默认保持空库
+- 支持本地模型缓存目录 `.hf-cache/`，避免重复下载模型
 
 ## 技术栈
 
@@ -36,9 +29,9 @@
 
 - React
 - React Router
-- Axios
 - Zustand
 - Ant Design
+- Axios
 - Vite
 
 ### 后端
@@ -80,122 +73,87 @@ README.md
 
 ## 本地启动
 
-### 1. 复制环境变量
+### 1. 准备环境变量
 
 ```powershell
 Copy-Item .env.example .env
 Copy-Item .env.llm.example .env.llm
 ```
 
-### 2. 按需填写模型配置
-
-编辑 `.env.llm`：
-
-- `LLM_DEFAULT_PROVIDER`
-- `DEEPSEEK_API_KEY`
-- `KIMI_API_KEY`
-- 检索与 OCR 相关参数
-
-说明：
-
-- `.env` 和 `.env.llm` 已被 `.gitignore` 忽略，不应上传到仓库
-- 未配置远程模型时，会自动回退到 `local`
-
-### 3. 启动项目
-
-```powershell
-docker compose up --build
-```
-
-### 4. 访问地址
-
-- 前端：`http://localhost:5173`
-- 后端文档：`http://localhost:8000/docs`
-
-## 关键配置
-
-示例配置文件：
-
-- [.env.example](/d:/Company_Answer/.env.example)
-- [.env.llm.example](/d:/Company_Answer/.env.llm.example)
-
-当前关键项包括：
+按需填写：
 
 - `DATABASE_URL`
 - `REDIS_URL`
-- `RETRIEVAL_EMBEDDING_MODEL`
-- `RETRIEVAL_RERANKER_MODEL`
-- `REDIS_CACHE_ENABLED`
-- `OCR_ENABLED`
+- `DEEPSEEK_API_KEY`
+- `KIMI_API_KEY`
 
-## V2 功能范围
+`.env` 和 `.env.llm` 已被 `.gitignore` 忽略，不会进入仓库。
 
-### 文档处理
-
-- 支持上传 `txt / pdf / docx`
-- 支持基础文档解析与切片
-- 保留页码、章节标题、前后相邻切片等元信息
-- 支持 OCR 回退处理图片型 PDF
-
-### 检索与问答
-
-- 混合检索
-- 相邻切片扩展
-- 精排重排序
-- 流式回答
-- 引用依据展示
-- Redis 精确缓存
-
-### 会话与文档管理
-
-- 新建会话
-- 会话重命名 / 置顶 / 删除
-- 文档查看 / 编辑 / 删除
-- 文档详情与切片内容查看
-
-## 离线评测
-
-评测数据与脚本位置：
-
-- [backend/eval_data/knowledge_eval.json](/d:/Company_Answer/backend/eval_data/knowledge_eval.json)
-- [backend/scripts/evaluate_retrieval.py](/d:/Company_Answer/backend/scripts/evaluate_retrieval.py)
-
-Docker 中执行：
+### 2. 启动服务
 
 ```powershell
-docker compose exec backend python scripts/evaluate_retrieval.py
+docker compose up -d --build
 ```
 
-当前输出：
+前端：`http://localhost:5173`  
+后端文档：`http://localhost:8000/docs`
 
-- `Recall@K`
-- `MRR`
-- `nDCG`
-- `Answer Hit Rate`
+## 模型缓存与离线运行
 
-## 版本演进
+推荐把 Hugging Face 模型缓存落到项目根目录：
 
-### V1
+```text
+.hf-cache/
+```
 
-- 最小闭环原型
-- 文档上传、解析、切片、问答、引用展示跑通
+当前 `docker-compose.yml` 已支持：
 
-### V2
+- `HF_HOME`
+- `HUGGINGFACE_HUB_CACHE`
+- `SENTENCE_TRANSFORMERS_HOME`
+- `HF_HUB_OFFLINE=1`
+- `TRANSFORMERS_OFFLINE=1`
 
-- 检索底座升级
-- 缓存、流式、文档管理、会话管理增强
-- 基础 OCR 与离线评测接入
+推荐流程：
 
-### V3 计划
+1. 首次联网下载 `BAAI/bge-m3`
+2. 首次联网下载 `BAAI/bge-reranker-v2-m3`
+3. 之后默认离线读取本地缓存，不再重复联网拉模型
 
-- 问题理解
-- 多轮上下文处理
-- 长文档问答增强
-- 更强的引用与证据绑定
+## 文档上传说明
 
-## 注意事项
+- 支持 `txt / pdf / docx`
+- 支持一次选择多个文件上传
+- 单文件上传时可以自定义标题
+- 多文件上传时默认使用文件名作为标题
 
-- 首次加载 `embedding` / `reranker` 模型时会更慢
-- 长 PDF 文档解析耗时通常高于 Word / TXT
-- 论文、报告类 PDF 因排版复杂，抽取文本与原文可能存在差异
-- 当前版本不建议把复杂长文档问答能力视为最终形态，这部分放在 `V3` 持续增强
+删除文档时：
+
+- 对应 `document_chunks` 会一起删除
+- 对应向量也会一起删除
+- 不会保留孤立切片
+
+## 检索与问答链路
+
+1. 用户提问
+2. 轻量问题改写与上下文继承
+3. 混合检索召回候选切片
+4. reranker 精排
+5. LLM 结合引用生成回答
+6. 前端展示回答与证据
+
+## 当前版本边界
+
+V3.0 当前保持偏保守回答策略：
+
+- 证据不足时优先拒答或收缩回答范围
+- 不做“超出文档范围”的自由扩写
+- 更重的局部归纳、源文件精准定位、引用样式增强，留到后续版本继续迭代
+
+## 后续方向
+
+- 引用展示与右侧证据统一优化
+- 源文件回溯与原文定位
+- 更自然的标题总结
+- 更稳的多轮语义承接
+- 更细粒度的证据片段命中展示

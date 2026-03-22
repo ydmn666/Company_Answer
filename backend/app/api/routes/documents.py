@@ -10,6 +10,7 @@ from app.schemas.documents import (
     DocumentListResponse,
     UpdateDocumentRequest,
     UploadDocumentResponse,
+    UploadDocumentsResponse,
 )
 from app.services.document_service import (
     create_document,
@@ -22,22 +23,32 @@ from app.services.document_service import (
 router = APIRouter()
 
 
-@router.post("/upload", response_model=UploadDocumentResponse)
+@router.post("/upload", response_model=UploadDocumentsResponse)
 async def upload_document(
-    title: str = Form(...),
-    file: UploadFile = File(...),
+    title: str | None = Form(default=None),
+    files: list[UploadFile] = File(...),
     db: Session = Depends(get_db),
     current_user: User = Depends(require_admin),
-) -> UploadDocumentResponse:
-    content = await file.read()
-    return create_document(
-        db=db,
-        title=title,
-        filename=file.filename or "uploaded.bin",
-        content_type=file.content_type,
-        content=content,
-        owner_id=current_user.id,
-    )
+) -> UploadDocumentsResponse:
+    results: list[UploadDocumentResponse] = []
+    multiple = len(files) > 1
+
+    for file in files:
+        content = await file.read()
+        filename = file.filename or "uploaded.bin"
+        effective_title = title.strip() if title and not multiple else filename.rsplit(".", 1)[0]
+        results.append(
+            create_document(
+                db=db,
+                title=effective_title,
+                filename=filename,
+                content_type=file.content_type,
+                content=content,
+                owner_id=current_user.id,
+            )
+        )
+
+    return UploadDocumentsResponse(items=results)
 
 
 @router.get("", response_model=DocumentListResponse)

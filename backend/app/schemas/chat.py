@@ -22,6 +22,7 @@ class AskResponse(BaseModel):
     answer: str
     citations: list[CitationItem]
     provider_used: str
+    rewritten_question: str | None = None
 
 
 class ChatSessionItem(BaseModel):
@@ -42,6 +43,7 @@ class ChatMessageItem(BaseModel):
     content: str
     citations: list[CitationItem] = []
     provider_used: str | None = None
+    rewritten_question: str | None = None
     created_at: datetime
 
     model_config = {"from_attributes": True}
