@@ -1,5 +1,6 @@
 import math
 import re
+import time
 from collections import Counter
 from functools import lru_cache
 
@@ -16,6 +17,11 @@ TOKEN_PATTERN = re.compile(r"[\u4e00-\u9fff]+|[A-Za-z0-9_]+")
 LOCAL_EMBEDDING_DIM = max(settings.retrieval_embedding_fallback_dim, 8)
 KEYWORD_PREFILTER_LIMIT = 160
 KEYWORD_TERM_LIMIT = 8
+
+
+def _trace(event: str, **payload) -> None:
+    body = " ".join(f"{key}={value}" for key, value in payload.items())
+    print(f"[retrieval_service] {event} {body}".strip(), flush=True)
 
 
 def tokenize(text: str) -> list[str]:
@@ -73,8 +79,10 @@ def _load_sentence_transformer():
     try:
         from sentence_transformers import SentenceTransformer
 
+        _trace("load_sentence_transformer.start", model=settings.retrieval_embedding_model)
         return SentenceTransformer(settings.retrieval_embedding_model)
     except Exception:
+        _trace("load_sentence_transformer.fallback_local", model=settings.retrieval_embedding_model)
         return None
 
 
@@ -86,8 +94,10 @@ def _load_cross_encoder():
     try:
         from sentence_transformers import CrossEncoder
 
+        _trace("load_cross_encoder.start", model=settings.retrieval_reranker_model)
         return CrossEncoder(settings.retrieval_reranker_model)
     except Exception:
+        _trace("load_cross_encoder.disabled", model=settings.retrieval_reranker_model)
         return None
 
 
@@ -98,21 +108,36 @@ def current_embedding_model_name() -> str:
 
 
 def generate_embedding(text: str) -> list[float]:
+    started = time.perf_counter()
     if settings.retrieval_embedding_backend == "sentence_transformers":
         model = _load_sentence_transformer()
         if model is not None:
             try:
                 vector = model.encode(text or "", normalize_embeddings=True)
+                _trace(
+                    "generate_embedding.remote_done",
+                    backend=settings.retrieval_embedding_backend,
+                    elapsed_ms=round((time.perf_counter() - started) * 1000, 2),
+                    text_len=len(text or ""),
+                )
                 return [float(value) for value in vector.tolist()]
             except Exception:
                 pass
 
+    _trace(
+        "generate_embedding.local_done",
+        backend="local-hash",
+        elapsed_ms=round((time.perf_counter() - started) * 1000, 2),
+        text_len=len(text or ""),
+    )
     return _local_hash_embedding(text)
 
 
 def _keyword_candidates(db: Session, question: str, limit: int) -> list[DocumentChunk]:
+    started = time.perf_counter()
     terms = list(expand_terms(question))[:KEYWORD_TERM_LIMIT]
     if not terms:
+        _trace("keyword_candidates.skip_no_terms", elapsed_ms=round((time.perf_counter() - started) * 1000, 2))
         return []
 
     conditions = []
@@ -135,6 +160,7 @@ def _keyword_candidates(db: Session, question: str, limit: int) -> list[Document
         .all()
     )
     if not chunks:
+        _trace("keyword_candidates.no_chunks", elapsed_ms=round((time.perf_counter() - started) * 1000, 2))
         return []
 
     corpus = [
@@ -144,13 +170,22 @@ def _keyword_candidates(db: Session, question: str, limit: int) -> list[Document
     bm25 = BM25Okapi(corpus)
     scores = bm25.get_scores(tokenize(question))
     ranked = sorted(zip(scores, chunks), key=lambda item: item[0], reverse=True)
-    return [chunk for score, chunk in ranked[:limit] if score > 0]
+    result = [chunk for score, chunk in ranked[:limit] if score > 0]
+    _trace(
+        "keyword_candidates.done",
+        elapsed_ms=round((time.perf_counter() - started) * 1000, 2),
+        terms=len(terms),
+        raw_chunks=len(chunks),
+        result=len(result),
+    )
+    return result
 
 
 def _vector_candidates(db: Session, query_embedding: list[float], limit: int) -> list[DocumentChunk]:
+    started = time.perf_counter()
     model_name = current_embedding_model_name()
     try:
-        return (
+        result = (
             db.query(DocumentChunk)
             .options(joinedload(DocumentChunk.document))
             .filter(DocumentChunk.embedding.is_not(None), DocumentChunk.embedding_model == model_name)
@@ -158,6 +193,13 @@ def _vector_candidates(db: Session, query_embedding: list[float], limit: int) ->
             .limit(limit)
             .all()
         )
+        _trace(
+            "vector_candidates.db_done",
+            elapsed_ms=round((time.perf_counter() - started) * 1000, 2),
+            model=model_name,
+            result=len(result),
+        )
+        return result
     except Exception:
         chunks = (
             db.query(DocumentChunk)
@@ -170,7 +212,15 @@ def _vector_candidates(db: Session, query_embedding: list[float], limit: int) ->
             key=lambda item: item[0],
             reverse=True,
         )
-        return [chunk for score, chunk in ranked[:limit] if score > 0]
+        result = [chunk for score, chunk in ranked[:limit] if score > 0]
+        _trace(
+            "vector_candidates.python_fallback_done",
+            elapsed_ms=round((time.perf_counter() - started) * 1000, 2),
+            model=model_name,
+            raw_chunks=len(chunks),
+            result=len(result),
+        )
+        return result
 
 
 def _expand_neighbors(
@@ -178,6 +228,7 @@ def _expand_neighbors(
     selected_chunks: list[DocumentChunk],
     by_id: dict[str, DocumentChunk],
 ) -> list[DocumentChunk]:
+    started = time.perf_counter()
     expanded: dict[str, DocumentChunk] = {}
     missing_ids: set[str] = set()
     for chunk in selected_chunks:
@@ -201,11 +252,20 @@ def _expand_neighbors(
     for chunk_id in missing_ids:
         if chunk_id in by_id:
             expanded[chunk_id] = by_id[chunk_id]
-    return list(expanded.values())
+    result = list(expanded.values())
+    _trace(
+        "expand_neighbors.done",
+        elapsed_ms=round((time.perf_counter() - started) * 1000, 2),
+        selected=len(selected_chunks),
+        result=len(result),
+    )
+    return result
 
 
 def rerank_chunks(question: str, query_embedding: list[float], chunks: list[DocumentChunk]) -> list[DocumentChunk]:
+    started = time.perf_counter()
     if not chunks:
+        _trace("rerank.skip_empty", elapsed_ms=round((time.perf_counter() - started) * 1000, 2))
         return []
 
     encoder = _load_cross_encoder()
@@ -218,7 +278,14 @@ def rerank_chunks(question: str, query_embedding: list[float], chunks: list[Docu
             semantic_score = cosine_similarity(chunk.embedding, query_embedding)
             ranked.append((lexical_score + semantic_score, chunk))
         ranked.sort(key=lambda item: item[0], reverse=True)
-        return [chunk for _, chunk in ranked]
+        result = [chunk for _, chunk in ranked]
+        _trace(
+            "rerank.local_done",
+            elapsed_ms=round((time.perf_counter() - started) * 1000, 2),
+            input=len(chunks),
+            result=len(result),
+        )
+        return result
 
     try:
         pairs = [
@@ -230,12 +297,22 @@ def rerank_chunks(question: str, query_embedding: list[float], chunks: list[Docu
         ]
         scores = encoder.predict(pairs)
         reranked_head = [chunk for _, chunk in sorted(zip(scores, chunks[: settings.retrieval_reranker_top_k]), key=lambda item: float(item[0]), reverse=True)]
-        return reranked_head + chunks[settings.retrieval_reranker_top_k :]
+        result = reranked_head + chunks[settings.retrieval_reranker_top_k :]
+        _trace(
+            "rerank.encoder_done",
+            elapsed_ms=round((time.perf_counter() - started) * 1000, 2),
+            input=len(chunks),
+            result=len(result),
+        )
+        return result
     except Exception:
+        _trace("rerank.exception_fallback", elapsed_ms=round((time.perf_counter() - started) * 1000, 2))
         return chunks
 
 
 def retrieve_top_chunks(db: Session, question: str, top_k: int | None = None) -> list[dict]:
+    started = time.perf_counter()
+    _trace("retrieve_top_chunks.start", question_len=len(question or ""))
     final_top_k = top_k or settings.retrieval_final_top_k
     query_embedding = generate_embedding(question)
 
@@ -252,8 +329,7 @@ def retrieve_top_chunks(db: Session, question: str, top_k: int | None = None) ->
 
     reranked = rerank_chunks(question, query_embedding, list(candidates.values()))
     top_chunks = reranked[:final_top_k]
-
-    return [
+    result = [
         {
             "chunk_id": chunk.id,
             "document_id": chunk.document.id,
@@ -265,3 +341,10 @@ def retrieve_top_chunks(db: Session, question: str, top_k: int | None = None) ->
         }
         for chunk in top_chunks
     ]
+    _trace(
+        "retrieve_top_chunks.done",
+        elapsed_ms=round((time.perf_counter() - started) * 1000, 2),
+        candidates=len(candidates),
+        top_chunks=len(result),
+    )
+    return result

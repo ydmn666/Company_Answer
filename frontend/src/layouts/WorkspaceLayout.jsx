@@ -13,13 +13,17 @@ import {
   UserSwitchOutlined,
 } from "@ant-design/icons";
 import { Button, Dropdown, Empty, Input, Layout, Menu, Modal, Space, Tag, Typography, message } from "antd";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Outlet, useLocation, useNavigate } from "react-router-dom";
 import { deleteSession, fetchSessions, updateSession } from "../api/chat";
 import { useAuthStore } from "../store/auth";
 import { useChatStore } from "../store/chat";
 
 const { Sider, Header, Content } = Layout;
+
+function isAbortError(error) {
+  return error?.name === "AbortError" || error?.code === "ERR_CANCELED";
+}
 
 export function WorkspaceLayout() {
   const navigate = useNavigate();
@@ -30,19 +34,38 @@ export function WorkspaceLayout() {
   const setActiveSessionId = useChatStore((state) => state.setActiveSessionId);
   const [sessions, setSessions] = useState([]);
   const selectedSessionId = new URLSearchParams(location.search).get("session");
+  const isDraftSession = location.pathname === "/chat" && new URLSearchParams(location.search).get("new") === "1";
 
-  const loadSessions = async () => {
+  const loadSessions = async (signal) => {
     try {
-      const data = await fetchSessions();
+      const data = await fetchSessions({ signal });
       setSessions(data || []);
-    } catch {
+    } catch (error) {
+      if (isAbortError(error)) return;
       message.error("会话列表加载失败。");
     }
   };
 
   useEffect(() => {
-    loadSessions();
+    const controller = new AbortController();
+    loadSessions(controller.signal);
+    return () => controller.abort();
   }, [location.pathname, location.search]);
+
+  const visibleSessions = useMemo(() => {
+    if (!isDraftSession) return sessions;
+    return [
+      {
+        id: "__draft__",
+        title: "新对话",
+        pinned: false,
+        updated_at: new Date().toISOString(),
+        message_count: 0,
+        isDraft: true,
+      },
+      ...sessions,
+    ];
+  }, [isDraftSession, sessions]);
 
   const navItems = [
     { key: "/chat", icon: <MessageOutlined />, label: "知识问答" },
@@ -136,62 +159,68 @@ export function WorkspaceLayout() {
             </div>
 
             <div className="sidebar-history-list">
-              {sessions.length ? (
-                sessions.map((item) => (
-                  <div
-                    key={item.id}
-                    className={`sidebar-history-item ${selectedSessionId === item.id ? "active" : ""}`.trim()}
-                    role="button"
-                    tabIndex={0}
-                    onClick={() => navigate(`/chat?session=${item.id}`)}
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter" || event.key === " ") {
-                        navigate(`/chat?session=${item.id}`);
-                      }
-                    }}
-                  >
-                    <span className="history-item-icon">
-                      <HistoryOutlined />
-                    </span>
-                    <span className="history-item-copy">
-                      <span className="history-item-title">
-                        {item.title}
-                        {item.pinned ? <PushpinOutlined className="history-pin-icon" /> : null}
-                      </span>
-                      <span className="history-item-time">
-                        {item.message_count} 条消息 · {new Date(item.updated_at).toLocaleString()}
-                      </span>
-                    </span>
-                    <Dropdown
-                      trigger={["click"]}
-                      menu={{
-                        items: [
-                          { key: "rename", icon: <EditOutlined />, label: "修改名称" },
-                          {
-                            key: "pin",
-                            icon: <PushpinOutlined />,
-                            label: item.pinned ? "取消置顶" : "置顶会话",
-                          },
-                          { key: "delete", icon: <DeleteOutlined />, label: "删除会话", danger: true },
-                        ],
-                        onClick: ({ key, domEvent }) => {
-                          domEvent.stopPropagation();
-                          if (key === "rename") handleRenameSession(item);
-                          if (key === "pin") handleTogglePin(item);
-                          if (key === "delete") handleDeleteSession(item);
-                        },
+              {visibleSessions.length ? (
+                visibleSessions.map((item) => {
+                  const isSelected = item.isDraft ? isDraftSession : selectedSessionId === item.id;
+                  return (
+                    <div
+                      key={item.id}
+                      className={`sidebar-history-item ${isSelected ? "active" : ""}`.trim()}
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => navigate(item.isDraft ? "/chat?new=1" : `/chat?session=${item.id}`)}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter" || event.key === " ") {
+                          navigate(item.isDraft ? "/chat?new=1" : `/chat?session=${item.id}`);
+                        }
                       }}
                     >
-                      <Button
-                        type="text"
-                        size="small"
-                        icon={<MoreOutlined />}
-                        className="history-item-action"
-                        onClick={(event) => event.stopPropagation()}
-                      />
-                    </Dropdown>
-                  </div>
-                ))
+                      <span className="history-item-icon">
+                        <HistoryOutlined />
+                      </span>
+                      <span className="history-item-copy">
+                        <span className="history-item-title">
+                          {item.title}
+                          {item.pinned ? <PushpinOutlined className="history-pin-icon" /> : null}
+                        </span>
+                        <span className="history-item-time">
+                          {item.message_count} 条消息 · {new Date(item.updated_at).toLocaleString()}
+                        </span>
+                      </span>
+
+                      {item.isDraft ? null : (
+                        <Dropdown
+                          trigger={["click"]}
+                          menu={{
+                            items: [
+                              { key: "rename", icon: <EditOutlined />, label: "修改名称" },
+                              {
+                                key: "pin",
+                                icon: <PushpinOutlined />,
+                                label: item.pinned ? "取消置顶" : "置顶会话",
+                              },
+                              { key: "delete", icon: <DeleteOutlined />, label: "删除会话", danger: true },
+                            ],
+                            onClick: ({ key, domEvent }) => {
+                              domEvent.stopPropagation();
+                              if (key === "rename") handleRenameSession(item);
+                              if (key === "pin") handleTogglePin(item);
+                              if (key === "delete") handleDeleteSession(item);
+                            },
+                          }}
+                        >
+                          <Button
+                            type="text"
+                            size="small"
+                            icon={<MoreOutlined />}
+                            className="history-item-action"
+                            onClick={(event) => event.stopPropagation()}
+                          />
+                        </Dropdown>
+                      )}
+                    </div>
+                  );
+                })
               ) : (
                 <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无历史会话" />
               )}

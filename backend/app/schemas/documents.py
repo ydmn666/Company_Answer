@@ -42,6 +42,10 @@ class UploadDocumentResponse(BaseModel):
     chunk_count: int
 
 
+class UploadDocumentsResponse(BaseModel):
+    items: list[UploadDocumentResponse]
+
+
 class UpdateDocumentRequest(BaseModel):
     title: str | None = None
     summary: str | None = None

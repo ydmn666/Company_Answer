@@ -1,21 +1,25 @@
 import { apiClient } from "./client";
 
-export async function uploadDocument(formData) {
+export async function uploadDocument(formData, options = {}) {
   const response = await apiClient.post("/documents/upload", formData, {
     headers: { "Content-Type": "multipart/form-data" },
+    signal: options.signal,
   });
   return response.data;
 }
 
-export async function fetchDocuments(query) {
+export async function fetchDocuments(query, options = {}) {
   const response = await apiClient.get("/documents", {
     params: query ? { query } : undefined,
+    signal: options.signal,
   });
   return response.data;
 }
 
-export async function fetchDocument(id) {
-  const response = await apiClient.get(`/documents/${id}`);
+export async function fetchDocument(id, options = {}) {
+  const response = await apiClient.get(`/documents/${id}`, {
+    signal: options.signal,
+  });
   return response.data;
 }
 

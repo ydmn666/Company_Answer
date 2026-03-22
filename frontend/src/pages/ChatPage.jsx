@@ -1,4 +1,5 @@
 import {
+  CloseOutlined,
   DownOutlined,
   EyeOutlined,
   LoadingOutlined,
@@ -19,6 +20,10 @@ function summarizeCitation(snippet) {
   return `${cleaned.slice(0, 88)}...`;
 }
 
+function isAbortError(error) {
+  return error?.name === "AbortError" || error?.code === "ERR_CANCELED";
+}
+
 export function ChatPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [provider, setProvider] = useState(localStorage.getItem("knowledge-provider") || "local");
@@ -31,10 +36,13 @@ export function ChatPage() {
   const [streamingAnswer, setStreamingAnswer] = useState("");
   const [streamingProvider, setStreamingProvider] = useState("");
   const [pendingCitations, setPendingCitations] = useState([]);
+  const [streamSessionId, setStreamSessionId] = useState(null);
   const fileInputRef = useRef(null);
   const streamRef = useRef(null);
   const messagesEndRef = useRef(null);
   const sendingRef = useRef(false);
+  const latestRequestRef = useRef(0);
+  const activeStreamRef = useRef({ controller: null, streamId: 0 });
 
   const messages = useChatStore((state) => state.messages);
   const activeSessionId = useChatStore((state) => state.activeSessionId);
@@ -53,6 +61,30 @@ export function ChatPage() {
     return latestAssistant?.citations || [];
   }, [loading, messages, pendingCitations]);
 
+  const stopActiveStream = () => {
+    if (activeStreamRef.current.controller) {
+      activeStreamRef.current.controller.abort();
+      activeStreamRef.current.controller = null;
+    }
+    sendingRef.current = false;
+    setLoading(false);
+    setStreamingAnswer("");
+    setStreamingProvider("");
+    setPendingCitations([]);
+    setStreamSessionId(null);
+  };
+
+  const cancelActiveAnswer = () => {
+    if (!loading || !activeStreamRef.current.controller) return;
+    stopActiveStream();
+    appendMessage({
+      role: "assistant",
+      content: "当前回答已取消。",
+      citations: [],
+      provider_used: provider,
+    });
+  };
+
   useEffect(() => {
     const container = streamRef.current;
     if (!container) return;
@@ -61,45 +93,75 @@ export function ChatPage() {
   }, [messages.length, loading]);
 
   useEffect(() => {
+    const requestId = latestRequestRef.current + 1;
+    latestRequestRef.current = requestId;
+    const controller = new AbortController();
     const isNewSession = searchParams.get("new");
     const sessionId = searchParams.get("session");
+
+    if (loading) {
+      return () => controller.abort();
+    }
+
+    const loadLatestSession = async () => {
+      try {
+        const data = await fetchSessions({ signal: controller.signal });
+        if (controller.signal.aborted || latestRequestRef.current !== requestId) return;
+        if (!data?.length) {
+          resetMessages();
+          setActiveSessionId(null);
+          return;
+        }
+
+        const detail = await fetchSession(data[0].id, { signal: controller.signal });
+        if (controller.signal.aborted || latestRequestRef.current !== requestId) return;
+        setActiveSessionId(detail.id);
+        setMessages(detail.messages);
+      } catch (error) {
+        if (controller.signal.aborted || latestRequestRef.current !== requestId || isAbortError(error)) return;
+        message.error("会话加载失败。");
+      }
+    };
 
     if (isNewSession) {
       resetMessages();
       setActiveSessionId(null);
-      return;
+      return () => controller.abort();
     }
 
     if (sessionId) {
-      fetchSession(sessionId)
+      fetchSession(sessionId, { signal: controller.signal })
         .then((detail) => {
+          if (controller.signal.aborted || latestRequestRef.current !== requestId) return;
           setActiveSessionId(detail.id);
           setMessages(detail.messages);
         })
-        .catch(() => message.error("会话详情加载失败。"));
-      return;
+        .catch((error) => {
+          if (controller.signal.aborted || latestRequestRef.current !== requestId || isAbortError(error)) return;
+          if (error?.response?.status === 404) {
+            resetMessages();
+            setActiveSessionId(null);
+            setSearchParams({ new: "1" }, { replace: true });
+            return;
+          }
+          message.error("会话详情加载失败。");
+        });
+      return () => controller.abort();
     }
 
-    fetchSessions()
-      .then((data) => {
-        if (!data?.length) {
-          resetMessages();
-          setActiveSessionId(null);
-          return null;
-        }
+    loadLatestSession();
+    return () => controller.abort();
+  }, [loading, resetMessages, searchParams, setActiveSessionId, setMessages, setSearchParams]);
 
-        return fetchSession(data[0].id).then((detail) => {
-          setActiveSessionId(detail.id);
-          setMessages(detail.messages);
-        });
-      })
-      .catch(() => message.error("会话加载失败。"));
-  }, [searchParams, resetMessages, setActiveSessionId, setMessages]);
+  useEffect(() => () => stopActiveStream(), []);
 
   const handleAsk = async () => {
     const trimmed = question.trim();
     if (!trimmed || sendingRef.current || loading) return;
 
+    const controller = new AbortController();
+    const streamId = activeStreamRef.current.streamId + 1;
+    activeStreamRef.current = { controller, streamId };
     sendingRef.current = true;
     setLoading(true);
     setStreamingAnswer("");
@@ -113,41 +175,55 @@ export function ChatPage() {
         { question: trimmed, session_id: activeSessionId, provider },
         {
           onSession: ({ session_id: sessionId }) => {
+            if (controller.signal.aborted || activeStreamRef.current.streamId !== streamId) return;
             if (!sessionId) return;
+            setStreamSessionId(sessionId);
             setActiveSessionId(sessionId);
-            setSearchParams({ session: sessionId });
+            setSearchParams({ session: sessionId }, { replace: true });
           },
           onCitations: (citationsPayload) => {
+            if (controller.signal.aborted || activeStreamRef.current.streamId !== streamId) return;
             setPendingCitations(citationsPayload);
           },
           onToken: (content) => {
+            if (controller.signal.aborted || activeStreamRef.current.streamId !== streamId) return;
             setStreamingProvider(provider);
             setStreamingAnswer((current) => current + content);
           },
           onDone: (result) => {
+            if (controller.signal.aborted || activeStreamRef.current.streamId !== streamId) return;
             appendMessage({
               role: "assistant",
               content: result.answer,
               citations: result.citations,
               provider_used: result.provider_used,
+              rewritten_question: result.rewritten_question,
             });
             setStreamingAnswer("");
             setStreamingProvider("");
             setPendingCitations([]);
+            setStreamSessionId(null);
           },
           onError: ({ detail }) => {
             throw new Error(detail || "提问失败，请稍后重试。");
           },
         },
+        { signal: controller.signal },
       );
       setAttachedFile(null);
     } catch (error) {
-      message.error(error.message || "提问失败，请稍后重试。");
-      setQuestion(trimmed);
+      if (!isAbortError(error)) {
+        message.error(error.message || "提问失败，请稍后重试。");
+        setQuestion(trimmed);
+      }
       setStreamingAnswer("");
       setStreamingProvider("");
       setPendingCitations([]);
+      setStreamSessionId(null);
     } finally {
+      if (activeStreamRef.current.streamId === streamId) {
+        activeStreamRef.current.controller = null;
+      }
       sendingRef.current = false;
       setLoading(false);
     }
@@ -165,7 +241,8 @@ export function ChatPage() {
       const detail = await fetchDocument(citation.document_id);
       setSelectedDocument(detail);
       setDetailOpen(true);
-    } catch {
+    } catch (error) {
+      if (isAbortError(error)) return;
       message.error("引用详情加载失败。");
     }
   };
@@ -214,7 +291,7 @@ export function ChatPage() {
                         </Tag>
                       </div>
                       <Typography.Paragraph>
-                        {streamingAnswer || "正在检索文档并生成回答，请稍候。首次提问会更慢一些。"}
+                        {streamingAnswer || "正在检索文档并生成回答，请稍候。首次提问会稍慢一些。"}
                       </Typography.Paragraph>
                     </article>
                   </div>
@@ -300,10 +377,10 @@ export function ChatPage() {
                   type="primary"
                   shape="circle"
                   className="composer-send"
-                  icon={loading ? <LoadingOutlined spin /> : <SendOutlined />}
-                  loading={loading}
-                  disabled={loading || sendingRef.current || !question.trim()}
-                  onClick={handleAsk}
+                  icon={loading ? <CloseOutlined /> : <SendOutlined />}
+                  disabled={loading ? false : sendingRef.current || !question.trim()}
+                  title={loading ? "取消回答" : "发送问题"}
+                  onClick={loading ? cancelActiveAnswer : handleAsk}
                 />
               </div>
             </div>

@@ -37,6 +37,15 @@ services:
       DATABASE_URL: ${DATABASE_URL}
       CORS_ORIGINS: ${CORS_ORIGINS}
       APP_ENV: ${APP_ENV}
+      HTTP_PROXY: ${HTTP_PROXY:-}
+      HTTPS_PROXY: ${HTTPS_PROXY:-}
+      NO_PROXY: ${NO_PROXY:-localhost,127.0.0.1,postgres,redis,host.docker.internal}
+      HF_HOME: /models/hf
+      HUGGINGFACE_HUB_CACHE: /models/hf/hub
+      TRANSFORMERS_CACHE: /models/hf/transformers
+      SENTENCE_TRANSFORMERS_HOME: /models/hf/sentence_transformers
+      HF_HUB_OFFLINE: "1"
+      TRANSFORMERS_OFFLINE: "1"
     ports:
       - "${BACKEND_PORT}:8000"
     depends_on:
@@ -46,6 +55,8 @@ services:
         condition: service_started
     volumes:
       - ./backend:/app
+      - ./.hf-cache:/models/hf
+
 
   frontend:
     build:

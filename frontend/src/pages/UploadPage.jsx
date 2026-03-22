@@ -1,6 +1,6 @@
 import { CheckCircleOutlined, InboxOutlined, LoadingOutlined } from "@ant-design/icons";
 import { Button, Form, Input, Space, Steps, Tag, Typography, Upload, message } from "antd";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { uploadDocument } from "../api/documents";
 import { SectionCard } from "../components/SectionCard";
@@ -16,6 +16,16 @@ export function UploadPage() {
   const [fileList, setFileList] = useState([]);
   const [loading, setLoading] = useState(false);
   const [stepIndex, setStepIndex] = useState(-1);
+  const [form] = Form.useForm();
+
+  const isMultiFile = fileList.length > 1;
+  const selectedCount = fileList.length;
+
+  const helperText = useMemo(() => {
+    if (!selectedCount) return "当前支持 TXT、PDF、DOCX 文件。";
+    if (selectedCount === 1) return `已选择 1 个文件：${fileList[0].name}`;
+    return `已选择 ${selectedCount} 个文件，多文件上传时将默认使用文件名作为标题。`;
+  }, [fileList, selectedCount]);
 
   const handleSubmit = async (values) => {
     if (!fileList.length) {
@@ -24,8 +34,13 @@ export function UploadPage() {
     }
 
     const formData = new FormData();
-    formData.append("title", values.title);
-    formData.append("file", fileList[0].originFileObj);
+    const title = (values.title || "").trim();
+    if (!isMultiFile && title) {
+      formData.append("title", title);
+    }
+    fileList.forEach((file) => {
+      formData.append("files", file.originFileObj);
+    });
 
     setLoading(true);
     setStepIndex(0);
@@ -33,9 +48,11 @@ export function UploadPage() {
     try {
       setStepIndex(1);
       setStepIndex(2);
-      await uploadDocument(formData);
-      message.success("文档上传完成，已写入索引。");
+      const result = await uploadDocument(formData);
+      const count = result?.items?.length || 0;
+      message.success(count > 1 ? `已完成 ${count} 个文件上传并建立索引。` : "文档上传完成，已写入索引。");
       setFileList([]);
+      form.resetFields();
       setStepIndex(3);
       setTimeout(() => navigate("/documents"), 800);
     } catch (error) {
@@ -68,30 +85,35 @@ export function UploadPage() {
         <SectionCard
           className="page-fill-card upload-main-card"
           title="上传资料"
-          subtitle="填写文档标题并提交文件"
+          subtitle="支持一次选择多个文件并批量建立索引"
         >
-          <Form layout="vertical" onFinish={handleSubmit} className="upload-form">
+          <Form form={form} layout="vertical" onFinish={handleSubmit} className="upload-form">
             <Form.Item
               label="文档标题"
               name="title"
-              rules={[{ required: true, message: "请输入文档标题。" }]}
+              rules={
+                isMultiFile
+                  ? []
+                  : [{ required: true, message: "请输入文档标题。" }]
+              }
+              extra={isMultiFile ? "多文件上传时将自动使用文件名作为标题。" : "单文件上传时可自定义标题。"}
             >
-              <Input placeholder="例如：季度安全制度汇编" />
+              <Input placeholder="例如：季度安全制度汇编" disabled={isMultiFile} />
             </Form.Item>
 
             <Form.Item label="上传文件">
               <Upload.Dragger
-                multiple={false}
+                multiple
                 fileList={fileList}
                 beforeUpload={() => false}
-                onChange={({ fileList: nextList }) => setFileList(nextList.slice(-1))}
+                onChange={({ fileList: nextList }) => setFileList(nextList)}
                 className="upload-dropzone"
               >
                 <p className="ant-upload-drag-icon">
                   <InboxOutlined />
                 </p>
-                <Typography.Text strong>拖拽文件到此处，或点击选择文件</Typography.Text>
-                <Typography.Paragraph>当前版本支持文本、PDF 和 DOCX 文件。</Typography.Paragraph>
+                <Typography.Text strong>拖拽文件到此处，或点击选择多个文件</Typography.Text>
+                <Typography.Paragraph>{helperText}</Typography.Paragraph>
               </Upload.Dragger>
             </Form.Item>
 

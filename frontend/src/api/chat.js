@@ -1,7 +1,7 @@
 import { apiClient } from "./client";
 import { useAuthStore } from "../store/auth";
 
-export async function askQuestionStream(payload, handlers = {}) {
+export async function askQuestionStream(payload, handlers = {}, options = {}) {
   const token = useAuthStore.getState().token;
   const response = await fetch(`${apiClient.defaults.baseURL}/chat/ask-stream`, {
     method: "POST",
@@ -10,6 +10,7 @@ export async function askQuestionStream(payload, handlers = {}) {
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
     },
     body: JSON.stringify(payload),
+    signal: options.signal,
   });
 
   if (!response.ok) {
@@ -62,6 +63,10 @@ export async function askQuestionStream(payload, handlers = {}) {
   };
 
   while (true) {
+    if (options.signal?.aborted) {
+      throw new DOMException("Aborted", "AbortError");
+    }
+
     const { value, done } = await reader.read();
     if (done) break;
     buffer += decoder.decode(value, { stream: true });
@@ -76,13 +81,17 @@ export async function askQuestionStream(payload, handlers = {}) {
   }
 }
 
-export async function fetchSessions() {
-  const response = await apiClient.get("/chat/sessions");
+export async function fetchSessions(options = {}) {
+  const response = await apiClient.get("/chat/sessions", {
+    signal: options.signal,
+  });
   return response.data;
 }
 
-export async function fetchSession(id) {
-  const response = await apiClient.get(`/chat/sessions/${id}`);
+export async function fetchSession(id, options = {}) {
+  const response = await apiClient.get(`/chat/sessions/${id}`, {
+    signal: options.signal,
+  });
   return response.data;
 }
 

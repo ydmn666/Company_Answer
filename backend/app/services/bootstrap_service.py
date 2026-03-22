@@ -1,3 +1,4 @@
+from sqlalchemy import update
 from sqlalchemy.orm import Session
 
 from app.models.chat_message import ChatMessage
@@ -5,7 +6,15 @@ from app.models.chat_session import ChatSession
 from app.models.document import Document
 from app.models.document_chunk import DocumentChunk
 from app.models.user import User
-from app.services.retrieval_service import current_embedding_model_name, generate_embedding, tokenize
+from app.services.retrieval_service import current_embedding_model_name, generate_embedding
+
+
+DEMO_DOCUMENT_FILENAMES = {"security-policy.txt", "helpdesk-handbook.txt"}
+
+
+def _trace(event: str, **payload) -> None:
+    body = " ".join(f"{key}={value}" for key, value in payload.items())
+    print(f"[bootstrap_service] {event} {body}".strip(), flush=True)
 
 
 def _ensure_user(
@@ -34,42 +43,6 @@ def _ensure_user(
     return user
 
 
-def _ensure_document(
-    db: Session,
-    owner_id: str,
-    title: str,
-    filename: str,
-    content: str,
-) -> None:
-    existing = db.query(Document).filter(Document.title == title, Document.filename == filename).first()
-    if existing:
-        return
-
-    document = Document(
-        owner_id=owner_id,
-        title=title,
-        filename=filename,
-        content_type="text/plain",
-        status="indexed",
-        summary=content[:140],
-        source_text=content,
-        chunk_count=1,
-    )
-    db.add(document)
-    db.flush()
-    db.add(
-        DocumentChunk(
-            document_id=document.id,
-            chunk_index=0,
-            chunk_type="paragraph",
-            token_count=len(tokenize(content)),
-            embedding_model=current_embedding_model_name(),
-            content=content,
-            embedding=generate_embedding(content),
-        )
-    )
-
-
 def _ensure_session(db: Session, user_id: str) -> None:
     existing = (
         db.query(ChatSession)
@@ -96,7 +69,7 @@ def _ensure_session(db: Session, user_id: str) -> None:
 def _repair_session_titles(db: Session) -> None:
     sessions = db.query(ChatSession).all()
     for session in sessions:
-        if "?" not in session.title and "閿" not in session.title:
+        if "?" not in session.title and "闁" not in session.title:
             continue
         first_user_message = next(
             (item for item in sorted(session.messages, key=lambda value: value.created_at) if item.role == "user"),
@@ -106,24 +79,58 @@ def _repair_session_titles(db: Session) -> None:
             session.title = first_user_message.content[:60]
 
 
+def _remove_demo_documents(db: Session) -> None:
+    demo_documents = (
+        db.query(Document)
+        .filter(Document.filename.in_(DEMO_DOCUMENT_FILENAMES))
+        .all()
+    )
+    if not demo_documents:
+        return
+
+    _trace("demo_documents.remove_start", count=len(demo_documents))
+    for document in demo_documents:
+        db.delete(document)
+    db.flush()
+    _trace("demo_documents.remove_done", count=len(demo_documents))
+
+
+def _backfill_chunk_embeddings(db: Session) -> None:
+    current_model = current_embedding_model_name()
+    stale_chunks = (
+        db.query(DocumentChunk)
+        .filter(
+            (DocumentChunk.embedding.is_(None))
+            | (DocumentChunk.embedding_model.is_(None))
+            | (DocumentChunk.embedding_model != current_model)
+        )
+        .all()
+    )
+    if not stale_chunks:
+        _trace("embedding_backfill.skip", model=current_model, chunks=0)
+        return
+
+    _trace("embedding_backfill.start", model=current_model, chunks=len(stale_chunks))
+    for chunk in stale_chunks:
+        db.execute(
+            update(DocumentChunk)
+            .where(DocumentChunk.id == chunk.id)
+            .values(
+                embedding=generate_embedding(chunk.content),
+                embedding_model=current_model,
+            )
+            .execution_options(synchronize_session=False)
+        )
+    db.flush()
+    _trace("embedding_backfill.done", model=current_model, chunks=len(stale_chunks))
+
+
 def seed_demo_data(db: Session) -> None:
-    admin = _ensure_user(db, "admin", "System Admin", "admin")
+    _ensure_user(db, "admin", "System Admin", "admin")
     employee = _ensure_user(db, "employee", "Knowledge Employee", "employee")
 
-    _ensure_document(
-        db,
-        admin.id,
-        "员工安全制度",
-        "security-policy.txt",
-        "企业员工必须为核心系统启用多因素认证。发现安全事件后，应在30分钟内完成上报。工程师访问生产系统前需要完成权限审批。",
-    )
-    _ensure_document(
-        db,
-        admin.id,
-        "IT 服务台手册",
-        "helpdesk-handbook.txt",
-        "服务台执行密码重置前必须核验员工身份。所有高权限操作都需要工单编号和审计日志。",
-    )
+    _remove_demo_documents(db)
     _ensure_session(db, employee.id)
     _repair_session_titles(db)
+    _backfill_chunk_embeddings(db)
     db.commit()
