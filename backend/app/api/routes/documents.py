@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
@@ -13,6 +13,7 @@ from app.schemas.documents import (
     DocumentDetailResponse,
     DocumentListResponse,
     UpdateDocumentRequest,
+    UploadDocumentFailureItem,
     UploadDocumentResponse,
     UploadDocumentsResponse,
 )
@@ -20,8 +21,8 @@ from app.services.document_service import (
     batch_delete_documents,
     create_document,
     delete_document,
-    get_document,
     get_chunk_detail,
+    get_document,
     get_source_file_path,
     list_documents,
     update_document,
@@ -32,30 +33,41 @@ router = APIRouter()
 
 @router.post("/upload", response_model=UploadDocumentsResponse)
 async def upload_document(
-    title: str | None = Form(default=None),
     files: list[UploadFile] = File(...),
     db: Session = Depends(get_db),
     current_user: User = Depends(require_admin),
 ) -> UploadDocumentsResponse:
     results: list[UploadDocumentResponse] = []
-    multiple = len(files) > 1
+    failed_items: list[UploadDocumentFailureItem] = []
 
     for file in files:
         content = await file.read()
         filename = file.filename or "uploaded.bin"
-        effective_title = title.strip() if title and not multiple else filename.rsplit(".", 1)[0]
-        results.append(
-            create_document(
-                db=db,
-                title=effective_title,
-                filename=filename,
-                content_type=file.content_type,
-                content=content,
-                owner_id=current_user.id,
+        effective_title = filename.rsplit(".", 1)[0]
+        try:
+            results.append(
+                create_document(
+                    db=db,
+                    title=effective_title,
+                    filename=filename,
+                    content_type=file.content_type,
+                    content=content,
+                    owner_id=current_user.id,
+                )
             )
-        )
+        except ValueError as exc:
+            failed_items.append(
+                UploadDocumentFailureItem(
+                    filename=filename,
+                    title=effective_title,
+                    message=str(exc),
+                )
+            )
 
-    return UploadDocumentsResponse(items=results)
+    if not results and failed_items:
+        raise HTTPException(status_code=409, detail=failed_items[0].message)
+
+    return UploadDocumentsResponse(items=results, failed_items=failed_items)
 
 
 @router.get("", response_model=DocumentListResponse)

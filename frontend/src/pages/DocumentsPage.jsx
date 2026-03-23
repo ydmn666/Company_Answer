@@ -43,6 +43,30 @@ const FILE_TYPE_OPTIONS = [
   { label: "TXT", value: "TXT" },
 ];
 
+const STATUS_META = {
+  indexed: {
+    label: "已完成",
+    color: "success",
+    description: null,
+  },
+  processing: {
+    label: "处理中",
+    color: "processing",
+    description: "文档处理中，暂不可查看完整内容。完成后会自动刷新状态。",
+  },
+  failed: {
+    label: "处理失败",
+    color: "error",
+    description: "文档处理失败，请重新上传或删除后重试。",
+  },
+};
+
+const STATUS_ORDER = {
+  indexed: 0,
+  processing: 1,
+  failed: 2,
+};
+
 function isAbortError(error) {
   return error?.name === "AbortError" || error?.code === "ERR_CANCELED";
 }
@@ -51,6 +75,14 @@ function getFileTypeIcon(fileType) {
   if (fileType === "PDF") return <FilePdfOutlined />;
   if (fileType === "DOCX") return <FileWordOutlined />;
   return <FileTextOutlined />;
+}
+
+function getStatusMeta(status) {
+  return STATUS_META[status] || {
+    label: status || "未知",
+    color: "default",
+    description: "当前状态暂不可识别。",
+  };
 }
 
 export function DocumentsPage() {
@@ -85,14 +117,29 @@ export function DocumentsPage() {
     return () => controller.abort();
   }, []);
 
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      loadDocuments(keyword, fileType);
+    }, 2000);
+
+    return () => window.clearInterval(timer);
+  }, [keyword, fileType]);
+
   const filtered = useMemo(() => {
     const q = keyword.trim().toLowerCase();
-    if (!q) return documents;
-    return documents.filter((item) =>
-      [item.title, item.summary, item.filename, item.file_type].some((field) =>
-        field?.toLowerCase().includes(q),
-      ),
-    );
+    const matched = !q
+      ? documents
+      : documents.filter((item) =>
+          [item.title, item.summary, item.filename, item.file_type].some((field) =>
+            field?.toLowerCase().includes(q),
+          ),
+        );
+
+    return [...matched].sort((a, b) => {
+      const statusGap = (STATUS_ORDER[a.status] ?? 99) - (STATUS_ORDER[b.status] ?? 99);
+      if (statusGap !== 0) return statusGap;
+      return new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime();
+    });
   }, [documents, keyword]);
 
   const totalChunks = documents.reduce((sum, item) => sum + item.chunk_count, 0);
@@ -256,48 +303,55 @@ export function DocumentsPage() {
         <div className="content-scroll-area documents-list-area">
           {filtered.length ? (
             <div className="documents-list">
-              {filtered.map((item) => (
-                <article key={item.id} className="document-record">
-                  <div className="document-record-top">
-                    <Space size="middle" wrap>
-                      <Checkbox
-                        checked={selectedIds.includes(item.id)}
-                        onChange={(event) => {
-                          setSelectedIds((current) =>
-                            event.target.checked ? [...current, item.id] : current.filter((id) => id !== item.id),
-                          );
-                        }}
-                      />
-                      <div className="item-icon">{getFileTypeIcon(item.file_type)}</div>
-                      <Typography.Text strong>{item.title}</Typography.Text>
-                      <Tag bordered={false} className="chip-tag">{item.file_type}</Tag>
-                      <Tag bordered={false} className="subtle-tag">{item.status}</Tag>
-                    </Space>
+              {filtered.map((item) => {
+                const statusMeta = getStatusMeta(item.status);
+                const statusDescription = item.status === "indexed" ? item.summary : statusMeta.description;
 
-                    <Space wrap>
-                      <Button icon={<EyeOutlined />} onClick={() => openDetail(item.id)}>
-                        查看详情
-                      </Button>
-                      <Button icon={<EditOutlined />} onClick={() => openEdit(item)}>
-                        修改
-                      </Button>
-                      <Button danger icon={<DeleteOutlined />} onClick={() => handleDeleteDocument(item)}>
-                        删除
-                      </Button>
-                    </Space>
-                  </div>
+                return (
+                  <article key={item.id} className="document-record">
+                    <div className="document-record-top">
+                      <Space size="middle" wrap>
+                        <Checkbox
+                          checked={selectedIds.includes(item.id)}
+                          onChange={(event) => {
+                            setSelectedIds((current) =>
+                              event.target.checked ? [...current, item.id] : current.filter((id) => id !== item.id),
+                            );
+                          }}
+                        />
+                        <div className="item-icon">{getFileTypeIcon(item.file_type)}</div>
+                        <Typography.Text strong>{item.title}</Typography.Text>
+                        <Tag bordered={false} className="chip-tag">{item.file_type}</Tag>
+                        <Tag color={statusMeta.color}>{statusMeta.label}</Tag>
+                      </Space>
 
-                  <Typography.Paragraph className="document-record-summary">{item.summary}</Typography.Paragraph>
+                      <Space wrap>
+                        <Button icon={<EyeOutlined />} onClick={() => openDetail(item.id)}>
+                          查看详情
+                        </Button>
+                        <Button icon={<EditOutlined />} onClick={() => openEdit(item)}>
+                          修改
+                        </Button>
+                        <Button danger icon={<DeleteOutlined />} onClick={() => handleDeleteDocument(item)}>
+                          删除
+                        </Button>
+                      </Space>
+                    </div>
 
-                  <div className="document-meta-line">
-                    <span>{item.filename}</span>
-                    <span>{item.chunk_count} 个切片</span>
-                    <span>{item.source_file_exists ? "已保存源文件" : "源文件缺失"}</span>
-                    <span>创建于 {new Date(item.created_at).toLocaleString()}</span>
-                    <span>更新于 {new Date(item.updated_at).toLocaleString()}</span>
-                  </div>
-                </article>
-              ))}
+                    <Typography.Paragraph className="document-record-summary">
+                      {statusDescription}
+                    </Typography.Paragraph>
+
+                    <div className="document-meta-line">
+                      <span>{item.filename}</span>
+                      <span>{item.chunk_count} 个切片</span>
+                      <span>{item.source_file_exists ? "已保存源文件" : "源文件缺失"}</span>
+                      <span>创建于 {new Date(item.created_at).toLocaleString()}</span>
+                      <span>更新于 {new Date(item.updated_at).toLocaleString()}</span>
+                    </div>
+                  </article>
+                );
+              })}
             </div>
           ) : (
             <Empty description={loadingList ? "正在加载文档..." : "没有符合条件的文档。"} />
@@ -315,7 +369,7 @@ export function DocumentsPage() {
           <Space direction="vertical" size="large" style={{ width: "100%" }}>
             <div className="detail-meta-grid">
               <div className="metric-box">
-                <span className="metric-box-value">{selectedDocument.status}</span>
+                <span className="metric-box-value">{getStatusMeta(selectedDocument.status).label}</span>
                 <span className="metric-box-label">当前状态</span>
               </div>
               <div className="metric-box">
@@ -331,7 +385,11 @@ export function DocumentsPage() {
                 <Typography.Text>内容类型：{selectedDocument.content_type || "未知"}</Typography.Text>
                 <Typography.Text>源文件状态：{selectedDocument.source_file_exists ? "可下载" : "已缺失"}</Typography.Text>
                 <Typography.Text>更新时间：{new Date(selectedDocument.updated_at).toLocaleString()}</Typography.Text>
-                <Typography.Paragraph>{selectedDocument.summary}</Typography.Paragraph>
+                <Typography.Paragraph>
+                  {selectedDocument.status === "indexed"
+                    ? selectedDocument.summary
+                    : getStatusMeta(selectedDocument.status).description}
+                </Typography.Paragraph>
                 <Space wrap>
                   <Button
                     icon={<DownloadOutlined />}
@@ -344,30 +402,41 @@ export function DocumentsPage() {
               </Space>
             </SectionCard>
 
-            <SectionCard title="原文查看" subtitle={selectedDocument.file_type === "PDF" ? "PDF 优先按页回溯" : "解析原文视图"}>
-              <Tabs items={sourceItems} />
-            </SectionCard>
+            {selectedDocument.status === "indexed" ? (
+              <>
+                <SectionCard
+                  title="原文查看"
+                  subtitle={selectedDocument.file_type === "PDF" ? "PDF 优先按页回溯" : "解析原文视图"}
+                >
+                  <Tabs items={sourceItems} />
+                </SectionCard>
 
-            <SectionCard title="切片内容" subtitle="文档切片明细">
-              <Space direction="vertical" size="middle" style={{ width: "100%" }}>
-                {selectedDocument.chunks.map((chunk) => (
-                  <div className="reference-card" key={chunk.id}>
-                    <Space wrap>
-                      <Typography.Text strong>切片 {chunk.chunk_index + 1}</Typography.Text>
-                      <Tag bordered={false} className="subtle-tag">{chunk.chunk_type}</Tag>
-                      {chunk.section_title ? (
-                        <Tag bordered={false} className="subtle-tag">{chunk.section_title}</Tag>
-                      ) : null}
-                      {chunk.page_no ? (
-                        <Tag bordered={false} className="subtle-tag">第 {chunk.page_no} 页</Tag>
-                      ) : null}
-                      <Tag bordered={false} className="subtle-tag">{chunk.token_count} tokens</Tag>
-                    </Space>
-                    <Typography.Paragraph>{chunk.content}</Typography.Paragraph>
-                  </div>
-                ))}
-              </Space>
-            </SectionCard>
+                <SectionCard title="切片内容" subtitle="文档切片明细">
+                  <Space direction="vertical" size="middle" style={{ width: "100%" }}>
+                    {selectedDocument.chunks.map((chunk) => (
+                      <div className="reference-card" key={chunk.id}>
+                        <Space wrap>
+                          <Typography.Text strong>切片 {chunk.chunk_index + 1}</Typography.Text>
+                          <Tag bordered={false} className="subtle-tag">{chunk.chunk_type}</Tag>
+                          {chunk.section_title ? (
+                            <Tag bordered={false} className="subtle-tag">{chunk.section_title}</Tag>
+                          ) : null}
+                          {chunk.page_no ? (
+                            <Tag bordered={false} className="subtle-tag">第 {chunk.page_no} 页</Tag>
+                          ) : null}
+                          <Tag bordered={false} className="subtle-tag">{chunk.token_count} tokens</Tag>
+                        </Space>
+                        <Typography.Paragraph>{chunk.content}</Typography.Paragraph>
+                      </div>
+                    ))}
+                  </Space>
+                </SectionCard>
+              </>
+            ) : (
+              <SectionCard title={getStatusMeta(selectedDocument.status).label} subtitle="等待文档状态更新">
+                <Typography.Paragraph>{getStatusMeta(selectedDocument.status).description}</Typography.Paragraph>
+              </SectionCard>
+            )}
           </Space>
         ) : null}
       </Drawer>
