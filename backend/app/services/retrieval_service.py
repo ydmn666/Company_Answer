@@ -1,4 +1,5 @@
 import math
+import logging
 import re
 import time
 from collections import Counter
@@ -9,6 +10,7 @@ from sqlalchemy import or_
 from sqlalchemy.orm import Session, joinedload
 
 from app.core.config import settings
+from app.core.logging_utils import log_event
 from app.models.document import Document
 from app.models.document_chunk import DocumentChunk
 
@@ -17,11 +19,11 @@ TOKEN_PATTERN = re.compile(r"[\u4e00-\u9fff]+|[A-Za-z0-9_]+")
 LOCAL_EMBEDDING_DIM = max(settings.retrieval_embedding_fallback_dim, 8)
 KEYWORD_PREFILTER_LIMIT = 160
 KEYWORD_TERM_LIMIT = 8
+logger = logging.getLogger(__name__)
 
 
 def _trace(event: str, **payload) -> None:
-    body = " ".join(f"{key}={value}" for key, value in payload.items())
-    print(f"[retrieval_service] {event} {body}".strip(), flush=True)
+    log_event(logger, event, **payload)
 
 
 def tokenize(text: str) -> list[str]:

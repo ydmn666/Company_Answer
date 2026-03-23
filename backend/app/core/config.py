@@ -36,6 +36,12 @@ class Settings(BaseSettings):
     ocr_backend: str = "rapidocr"
     ocr_languages: str = "ch,en"
     document_storage_dir: str = "data/source_files"
+    log_level: str = "INFO"
+    log_json: bool = True
+    log_to_file: bool = True
+    log_dir: str = "logs"
+    log_file_max_bytes: int = 5242880
+    log_file_backup_count: int = 5
 
     eval_dataset_path: str = "eval_data/knowledge_eval.json"
     eval_recall_k: list[int] = Field(default_factory=lambda: [1, 3, 5])

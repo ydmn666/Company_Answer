@@ -6,6 +6,7 @@ from datetime import datetime
 
 from sqlalchemy.orm import Session
 
+from app.core.logging_utils import log_event
 from app.models.chat_message import ChatMessage
 from app.models.chat_session import ChatSession
 from app.models.user import User
@@ -31,8 +32,7 @@ SHORT_FOLLOWUP_PATTERN = re.compile(r"(呢|吗|么|如何|多久|多少|哪些|�
 
 
 def _trace(event: str, **payload) -> None:
-    body = " ".join(f"{key}={value}" for key, value in payload.items())
-    print(f"[chat_service] {event} {body}".strip(), flush=True)
+    log_event(logger, event, **payload)
 
 
 def _ensure_session(db: Session, user: User, session_id: str | None, question: str) -> ChatSession:

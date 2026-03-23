@@ -7,6 +7,7 @@ from collections.abc import Iterator
 import httpx
 
 from app.core.config import settings
+from app.core.logging_utils import log_event
 from app.services.retrieval_service import tokenize
 
 
@@ -22,8 +23,7 @@ STREAM_RAW_LINE_LOG_LIMIT = 5
 
 
 def _trace(event: str, **payload) -> None:
-    body = " ".join(f"{key}={value}" for key, value in payload.items())
-    print(f"[llm_service] {event} {body}".strip(), flush=True)
+    log_event(logger, event, **payload)
 
 
 def _sentence_score(question_tokens: set[str], sentence: str) -> int:

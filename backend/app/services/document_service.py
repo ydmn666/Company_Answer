@@ -1,4 +1,5 @@
 import json
+import logging
 import re
 from datetime import datetime
 from io import BytesIO
@@ -12,6 +13,7 @@ from pypdf import PdfReader
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
+from app.core.logging_utils import log_event
 from app.models.document import Document
 from app.models.document_chunk import DocumentChunk
 from app.schemas.documents import (
@@ -33,6 +35,7 @@ from app.services.retrieval_service import current_embedding_model_name, generat
 HEADING_PATTERN = re.compile(r"^(#{1,6}\s+.+|第[一二三四五六七八九十百千万\d]+[章节部分条款].+)$")
 SENTENCE_PATTERN = re.compile(r"(?<=[。！？；.!?;])")
 SUPPORTED_FILE_TYPES = {"PDF", "DOCX", "TXT"}
+logger = logging.getLogger(__name__)
 
 
 def _storage_root() -> Path:
@@ -301,6 +304,7 @@ def create_document(
     content: bytes,
     owner_id: str | None = None,
 ) -> UploadDocumentResponse:
+    started = datetime.utcnow()
     raw_text, blocks, source_pages = _extract_text_payload(content, filename, content_type)
     chunk_payloads = _build_chunk_payloads(raw_text, blocks)
     now = datetime.utcnow()
@@ -329,6 +333,17 @@ def create_document(
     document.updated_at = now
     db.commit()
     db.refresh(document)
+    elapsed_ms = round((datetime.utcnow() - started).total_seconds() * 1000, 2)
+    log_event(
+        logger,
+        "document.create.completed",
+        document_id=document.id,
+        title=document.title,
+        filename=document.filename,
+        file_type=document.file_type,
+        chunk_count=document.chunk_count,
+        elapsed_ms=elapsed_ms,
+    )
     return UploadDocumentResponse(
         id=document.id,
         title=document.title,
@@ -348,12 +363,14 @@ def list_documents(db: Session, query: str | None = None, file_type: str | None 
         documents_query = documents_query.filter(Document.file_type == file_type.upper())
 
     items = documents_query.order_by(Document.updated_at.desc(), Document.created_at.desc()).all()
+    log_event(logger, "document.list.completed", query=query or "", file_type=file_type or "", count=len(items))
     return DocumentListResponse(items=[_serialize_document_item(item) for item in items])
 
 
 def get_document(db: Session, document_id: str) -> DocumentDetailResponse | None:
     document = db.query(Document).filter(Document.id == document_id).first()
     if not document:
+        log_event(logger, "document.detail.missing", level=logging.WARNING, document_id=document_id)
         return None
 
     item = _serialize_document_item(document)
@@ -380,6 +397,7 @@ def get_document(db: Session, document_id: str) -> DocumentDetailResponse | None
 def get_chunk_detail(db: Session, chunk_id: str) -> DocumentChunkDetailResponse | None:
     chunk = db.query(DocumentChunk).filter(DocumentChunk.id == chunk_id).first()
     if not chunk or not chunk.document:
+        log_event(logger, "document.chunk_detail.missing", level=logging.WARNING, chunk_id=chunk_id)
         return None
 
     document = chunk.document
@@ -450,11 +468,13 @@ def update_document(db: Session, document_id: str, payload: UpdateDocumentReques
 def delete_document(db: Session, document_id: str) -> DocumentActionResponse | None:
     document = db.query(Document).filter(Document.id == document_id).first()
     if not document:
+        log_event(logger, "document.delete.missing", level=logging.WARNING, document_id=document_id)
         return None
 
     _delete_source_file(document)
     db.delete(document)
     db.commit()
+    log_event(logger, "document.delete.completed", document_id=document_id, filename=document.filename)
     return DocumentActionResponse(id=document_id, message="Document deleted")
 
 
@@ -469,6 +489,7 @@ def batch_delete_documents(db: Session, document_ids: list[str]) -> DocumentBatc
         db.delete(document)
 
     db.commit()
+    log_event(logger, "document.batch_delete.completed", requested=len(normalized_ids), deleted_count=len(deleted_ids))
     return DocumentBatchDeleteResponse(
         ids=deleted_ids,
         deleted_count=len(deleted_ids),

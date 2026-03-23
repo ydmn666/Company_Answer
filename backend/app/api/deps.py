@@ -1,6 +1,7 @@
 from fastapi import Depends, Header, HTTPException
 from sqlalchemy.orm import Session
 
+from app.core.logging_utils import set_request_context
 from app.db.session import get_db
 from app.models.user import User
 from app.services.security_service import decode_token
@@ -23,6 +24,7 @@ def get_current_user(
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=401, detail="User not found")
+    set_request_context(user_id=user.id)
     return user
 
 

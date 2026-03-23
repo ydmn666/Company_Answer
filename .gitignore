@@ -19,6 +19,7 @@ frontend/node_modules/
 frontend/dist/
 backend/.venv/
 .hf-cache/
+backend/logs/
 backend/data/source_files/
 *.docx
 _*.docx
