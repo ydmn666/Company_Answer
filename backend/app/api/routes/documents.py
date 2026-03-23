@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
+from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user, require_admin
@@ -6,6 +7,9 @@ from app.db.session import get_db
 from app.models.user import User
 from app.schemas.documents import (
     DocumentActionResponse,
+    DocumentBatchDeleteRequest,
+    DocumentBatchDeleteResponse,
+    DocumentChunkDetailResponse,
     DocumentDetailResponse,
     DocumentListResponse,
     UpdateDocumentRequest,
@@ -13,9 +17,12 @@ from app.schemas.documents import (
     UploadDocumentsResponse,
 )
 from app.services.document_service import (
+    batch_delete_documents,
     create_document,
     delete_document,
     get_document,
+    get_chunk_detail,
+    get_source_file_path,
     list_documents,
     update_document,
 )
@@ -54,10 +61,11 @@ async def upload_document(
 @router.get("", response_model=DocumentListResponse)
 def get_documents(
     query: str | None = Query(default=None),
+    file_type: str | None = Query(default=None),
     db: Session = Depends(get_db),
     _: User = Depends(require_admin),
 ) -> DocumentListResponse:
-    return list_documents(db, query)
+    return list_documents(db, query, file_type)
 
 
 @router.get("/{document_id}", response_model=DocumentDetailResponse)
@@ -70,6 +78,32 @@ def get_document_by_id(
     if not document:
         raise HTTPException(status_code=404, detail="Document not found")
     return document
+
+
+@router.get("/chunks/{chunk_id}", response_model=DocumentChunkDetailResponse)
+def get_document_chunk_detail(
+    chunk_id: str,
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+) -> DocumentChunkDetailResponse:
+    chunk = get_chunk_detail(db, chunk_id)
+    if not chunk:
+        raise HTTPException(status_code=404, detail="Chunk not found")
+    return chunk
+
+
+@router.get("/{document_id}/download")
+def download_document_source(
+    document_id: str,
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+) -> FileResponse:
+    result = get_source_file_path(db, document_id)
+    if not result:
+        raise HTTPException(status_code=404, detail="Source file not found")
+
+    document, path = result
+    return FileResponse(path=path, filename=document.filename, media_type=document.content_type or "application/octet-stream")
 
 
 @router.patch("/{document_id}", response_model=DocumentDetailResponse)
@@ -95,3 +129,12 @@ def remove_document(
     if not result:
         raise HTTPException(status_code=404, detail="Document not found")
     return result
+
+
+@router.post("/batch-delete", response_model=DocumentBatchDeleteResponse)
+def remove_documents(
+    payload: DocumentBatchDeleteRequest,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_admin),
+) -> DocumentBatchDeleteResponse:
+    return batch_delete_documents(db, payload.ids)

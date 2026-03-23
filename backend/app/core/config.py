@@ -35,6 +35,7 @@ class Settings(BaseSettings):
     ocr_enabled: bool = True
     ocr_backend: str = "rapidocr"
     ocr_languages: str = "ch,en"
+    document_storage_dir: str = "data/source_files"
 
     eval_dataset_path: str = "eval_data/knowledge_eval.json"
     eval_recall_k: list[int] = Field(default_factory=lambda: [1, 3, 5])

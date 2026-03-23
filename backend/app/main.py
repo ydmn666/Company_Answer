@@ -30,6 +30,10 @@ def ensure_schema_compatibility() -> None:
     _ensure_column(inspector, "users", "role", "VARCHAR(30) NOT NULL DEFAULT 'employee'")
     _ensure_column(inspector, "documents", "source_text", "TEXT NOT NULL DEFAULT ''")
     _ensure_column(inspector, "documents", "updated_at", "TIMESTAMP NULL")
+    _ensure_column(inspector, "documents", "file_type", "VARCHAR(20) NOT NULL DEFAULT 'TXT'")
+    _ensure_column(inspector, "documents", "source_file_path", "TEXT NULL")
+    _ensure_column(inspector, "documents", "source_file_size", "BIGINT NULL")
+    _ensure_column(inspector, "documents", "source_pages_json", "TEXT NULL")
     _ensure_column(inspector, "document_chunks", "section_title", "VARCHAR(255) NULL")
     _ensure_column(inspector, "document_chunks", "page_no", "INTEGER NULL")
     _ensure_column(inspector, "document_chunks", "chunk_type", "VARCHAR(30) NOT NULL DEFAULT 'paragraph'")
@@ -44,6 +48,19 @@ def ensure_schema_compatibility() -> None:
     with engine.begin() as connection:
         connection.execute(text("ALTER TABLE document_chunks ALTER COLUMN embedding TYPE vector"))
         connection.execute(text("UPDATE documents SET updated_at = created_at WHERE updated_at IS NULL"))
+        connection.execute(
+            text(
+                """
+                UPDATE documents
+                SET file_type = CASE
+                    WHEN lower(filename) LIKE '%.pdf' THEN 'PDF'
+                    WHEN lower(filename) LIKE '%.docx' THEN 'DOCX'
+                    ELSE 'TXT'
+                END
+                WHERE file_type IS NULL OR file_type = ''
+                """
+            )
+        )
         connection.execute(text("UPDATE chat_sessions SET updated_at = created_at WHERE updated_at IS NULL"))
 
 

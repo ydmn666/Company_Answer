@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class CitationItem(BaseModel):
@@ -9,6 +9,8 @@ class CitationItem(BaseModel):
     document_title: str
     snippet: str
     page_no: int | None = None
+    section_title: str | None = None
+    chunk_index: int | None = None
 
 
 class AskRequest(BaseModel):
@@ -41,7 +43,7 @@ class ChatMessageItem(BaseModel):
     id: str
     role: str
     content: str
-    citations: list[CitationItem] = []
+    citations: list[CitationItem] = Field(default_factory=list)
     provider_used: str | None = None
     rewritten_question: str | None = None
     created_at: datetime

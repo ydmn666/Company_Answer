@@ -1,12 +1,21 @@
 from datetime import datetime
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+
+
+class SourcePageItem(BaseModel):
+    page_no: int
+    content: str
 
 
 class DocumentItem(BaseModel):
     id: str
     title: str
     filename: str
+    file_type: str
+    source_file_path: str | None = None
+    source_file_size: int | None = None
+    source_file_exists: bool = False
     status: str
     summary: str
     chunk_count: int
@@ -32,7 +41,46 @@ class DocumentChunkItem(BaseModel):
 
 class DocumentDetailResponse(DocumentItem):
     content_type: str | None = None
+    source_text: str
+    source_pages: list[SourcePageItem] = Field(default_factory=list)
     chunks: list[DocumentChunkItem]
+
+
+class ChunkNeighborItem(BaseModel):
+    id: str
+    chunk_index: int
+    section_title: str | None = None
+    page_no: int | None = None
+    content: str
+
+
+class DocumentChunkDetailResponse(BaseModel):
+    chunk_id: str
+    document_id: str
+    document_title: str
+    filename: str
+    file_type: str
+    content_type: str | None = None
+    page_no: int | None = None
+    section_title: str | None = None
+    chunk_index: int
+    snippet: str
+    content: str
+    previous_chunk: ChunkNeighborItem | None = None
+    next_chunk: ChunkNeighborItem | None = None
+    source_text: str
+    source_page_content: str | None = None
+    source_file_exists: bool = False
+
+
+class DocumentBatchDeleteRequest(BaseModel):
+    ids: list[str]
+
+
+class DocumentBatchDeleteResponse(BaseModel):
+    ids: list[str]
+    deleted_count: int
+    message: str
 
 
 class UploadDocumentResponse(BaseModel):
