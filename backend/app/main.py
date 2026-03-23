@@ -1,4 +1,7 @@
+import logging
+import time
 from contextlib import asynccontextmanager
+from uuid import uuid4
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -9,7 +12,12 @@ from app.core.config import settings
 from app.db.base import Base
 from app.db.session import SessionLocal, engine
 from app.models import chat_message, chat_session, document, document_chunk, user  # noqa: F401
+from app.core.logging_utils import clear_request_context, configure_logging, log_event, set_request_context
+from app.services.health_service import health_snapshot
 from app.services.bootstrap_service import seed_demo_data
+
+configure_logging()
+logger = logging.getLogger(__name__)
 
 
 def _ensure_column(inspector, table_name: str, column_name: str, definition: str) -> None:
@@ -66,6 +74,7 @@ def ensure_schema_compatibility() -> None:
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    log_event(logger, "app.startup.begin", app_env=settings.app_env)
     Base.metadata.create_all(bind=engine)
     ensure_schema_compatibility()
 
@@ -74,7 +83,9 @@ async def lifespan(_: FastAPI):
         seed_demo_data(db)
     finally:
         db.close()
+    log_event(logger, "app.startup.ready")
     yield
+    log_event(logger, "app.shutdown.complete")
 
 
 app = FastAPI(
@@ -94,6 +105,55 @@ app.add_middleware(
 app.include_router(api_router, prefix="/api")
 
 
+@app.middleware("http")
+async def request_logging_middleware(request, call_next):
+    request_id = request.headers.get("X-Request-ID") or str(uuid4())
+    started = time.perf_counter()
+    user_id = None
+    authorization = request.headers.get("Authorization", "")
+    if authorization.startswith("Bearer "):
+        user_id = "authenticated"
+
+    set_request_context(request_id=request_id, user_id=user_id)
+    log_event(
+        logger,
+        "http.request.start",
+        method=request.method,
+        path=request.url.path,
+        query=str(request.url.query or ""),
+        client=request.client.host if request.client else None,
+    )
+
+    try:
+        response = await call_next(request)
+        elapsed_ms = round((time.perf_counter() - started) * 1000, 2)
+        response.headers["X-Request-ID"] = request_id
+        log_event(
+            logger,
+            "http.request.complete",
+            method=request.method,
+            path=request.url.path,
+            status_code=response.status_code,
+            elapsed_ms=elapsed_ms,
+        )
+        return response
+    except Exception:
+        elapsed_ms = round((time.perf_counter() - started) * 1000, 2)
+        log_event(
+            logger,
+            "http.request.error",
+            level=logging.ERROR,
+            method=request.method,
+            path=request.url.path,
+            elapsed_ms=elapsed_ms,
+        )
+        raise
+    finally:
+        clear_request_context()
+
+
 @app.get("/health")
-def health_check() -> dict[str, str]:
-    return {"status": "ok"}
+def health_check() -> dict:
+    snapshot = health_snapshot()
+    log_event(logger, "health.check.completed", status=snapshot["status"])
+    return snapshot

@@ -1,6 +1,9 @@
+import logging
+
 from sqlalchemy import update
 from sqlalchemy.orm import Session
 
+from app.core.logging_utils import log_event
 from app.models.chat_message import ChatMessage
 from app.models.chat_session import ChatSession
 from app.models.document import Document
@@ -10,11 +13,11 @@ from app.services.retrieval_service import current_embedding_model_name, generat
 
 
 DEMO_DOCUMENT_FILENAMES = {"security-policy.txt", "helpdesk-handbook.txt"}
+logger = logging.getLogger(__name__)
 
 
 def _trace(event: str, **payload) -> None:
-    body = " ".join(f"{key}={value}" for key, value in payload.items())
-    print(f"[bootstrap_service] {event} {body}".strip(), flush=True)
+    log_event(logger, event, **payload)
 
 
 def _ensure_user(
