@@ -123,6 +123,8 @@ def _build_citations(chunks: list[dict]) -> list[dict]:
             "document_title": item["document_title"],
             "snippet": item["snippet"],
             "page_no": item.get("page_no"),
+            "section_title": item.get("section_title"),
+            "chunk_index": item.get("chunk_index"),
         }
         for item in chunks[:3]
     ]

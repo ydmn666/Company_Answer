@@ -1,43 +1,87 @@
 import {
   DeleteOutlined,
+  DownloadOutlined,
   EditOutlined,
   EyeOutlined,
+  FilePdfOutlined,
   FileTextOutlined,
+  FileWordOutlined,
   SearchOutlined,
   UploadOutlined,
 } from "@ant-design/icons";
 import { useEffect, useMemo, useState } from "react";
-import { Button, Drawer, Empty, Form, Input, Modal, Space, Tag, Typography, message } from "antd";
+import {
+  Button,
+  Checkbox,
+  Drawer,
+  Empty,
+  Form,
+  Input,
+  Modal,
+  Select,
+  Space,
+  Tag,
+  Tabs,
+  Typography,
+  message,
+} from "antd";
 import { useNavigate } from "react-router-dom";
-import { deleteDocument, fetchDocument, fetchDocuments, updateDocument } from "../api/documents";
+import {
+  batchDeleteDocuments,
+  deleteDocument,
+  downloadDocumentSource,
+  fetchDocument,
+  fetchDocuments,
+  updateDocument,
+} from "../api/documents";
 import { SectionCard } from "../components/SectionCard";
+
+const FILE_TYPE_OPTIONS = [
+  { label: "全部类型", value: "" },
+  { label: "PDF", value: "PDF" },
+  { label: "DOCX", value: "DOCX" },
+  { label: "TXT", value: "TXT" },
+];
 
 function isAbortError(error) {
   return error?.name === "AbortError" || error?.code === "ERR_CANCELED";
+}
+
+function getFileTypeIcon(fileType) {
+  if (fileType === "PDF") return <FilePdfOutlined />;
+  if (fileType === "DOCX") return <FileWordOutlined />;
+  return <FileTextOutlined />;
 }
 
 export function DocumentsPage() {
   const navigate = useNavigate();
   const [documents, setDocuments] = useState([]);
   const [keyword, setKeyword] = useState("");
+  const [fileType, setFileType] = useState("");
+  const [selectedIds, setSelectedIds] = useState([]);
   const [detailOpen, setDetailOpen] = useState(false);
   const [selectedDocument, setSelectedDocument] = useState(null);
   const [editingDocument, setEditingDocument] = useState(null);
+  const [loadingList, setLoadingList] = useState(false);
   const [form] = Form.useForm();
 
-  const loadDocuments = async (query = "", signal) => {
+  const loadDocuments = async (nextQuery = keyword, nextFileType = fileType, signal) => {
     try {
-      const data = await fetchDocuments(query, { signal });
+      setLoadingList(true);
+      const data = await fetchDocuments(nextQuery, { signal, fileType: nextFileType });
       setDocuments(data.items || []);
+      setSelectedIds((current) => current.filter((id) => (data.items || []).some((item) => item.id === id)));
     } catch (error) {
       if (isAbortError(error)) return;
       message.error("文档列表加载失败。");
+    } finally {
+      setLoadingList(false);
     }
   };
 
   useEffect(() => {
     const controller = new AbortController();
-    loadDocuments("", controller.signal);
+    loadDocuments("", "", controller.signal);
     return () => controller.abort();
   }, []);
 
@@ -45,11 +89,15 @@ export function DocumentsPage() {
     const q = keyword.trim().toLowerCase();
     if (!q) return documents;
     return documents.filter((item) =>
-      [item.title, item.summary, item.filename].some((field) => field?.toLowerCase().includes(q)),
+      [item.title, item.summary, item.filename, item.file_type].some((field) =>
+        field?.toLowerCase().includes(q),
+      ),
     );
   }, [documents, keyword]);
 
   const totalChunks = documents.reduce((sum, item) => sum + item.chunk_count, 0);
+  const allChecked = Boolean(filtered.length) && filtered.every((item) => selectedIds.includes(item.id));
+  const indeterminate = filtered.some((item) => selectedIds.includes(item.id)) && !allChecked;
 
   const openDetail = async (documentId) => {
     try {
@@ -77,7 +125,7 @@ export function DocumentsPage() {
       setEditingDocument(null);
       setSelectedDocument((current) => (current?.id === updated.id ? updated : current));
       message.success("文档信息已更新。");
-      await loadDocuments(keyword);
+      await loadDocuments();
     } catch (error) {
       if (error?.errorFields) return;
       message.error("文档更新失败。");
@@ -87,7 +135,7 @@ export function DocumentsPage() {
   const handleDeleteDocument = (document) => {
     Modal.confirm({
       title: "删除文档",
-      content: "删除后该文档及其切片会被移除，相关历史引用可能无法继续查看。",
+      content: "删除后会同时清理文档、切片、向量索引和源文件。",
       okButtonProps: { danger: true },
       onOk: async () => {
         await deleteDocument(document.id);
@@ -96,10 +144,51 @@ export function DocumentsPage() {
           setSelectedDocument(null);
           setDetailOpen(false);
         }
-        await loadDocuments(keyword);
+        await loadDocuments();
       },
     });
   };
+
+  const handleBatchDelete = () => {
+    if (!selectedIds.length) {
+      message.warning("请先选择要删除的文档。");
+      return;
+    }
+
+    Modal.confirm({
+      title: "批量删除文档",
+      content: `确认删除 ${selectedIds.length} 个文档吗？这会同时删除切片、向量索引和源文件。`,
+      okButtonProps: { danger: true },
+      onOk: async () => {
+        const result = await batchDeleteDocuments(selectedIds);
+        message.success(`已删除 ${result.deleted_count} 个文档。`);
+        setSelectedIds([]);
+        if (selectedDocument && result.ids.includes(selectedDocument.id)) {
+          setSelectedDocument(null);
+          setDetailOpen(false);
+        }
+        await loadDocuments();
+      },
+    });
+  };
+
+  const sourceItems = selectedDocument?.source_pages?.length
+    ? selectedDocument.source_pages.map((page) => ({
+        key: String(page.page_no),
+        label: `第 ${page.page_no} 页`,
+        children: <Typography.Paragraph style={{ whiteSpace: "pre-wrap" }}>{page.content}</Typography.Paragraph>,
+      }))
+    : [
+        {
+          key: "source-text",
+          label: selectedDocument?.file_type === "PDF" ? "解析原文" : "原文",
+          children: (
+            <Typography.Paragraph style={{ whiteSpace: "pre-wrap" }}>
+              {selectedDocument?.source_text || "暂无解析原文。"}
+            </Typography.Paragraph>
+          ),
+        },
+      ];
 
   return (
     <div className="workspace-page-shell documents-shell">
@@ -113,6 +202,14 @@ export function DocumentsPage() {
         </div>
 
         <div className="page-topbar-actions">
+          <Button
+            danger
+            disabled={!selectedIds.length}
+            icon={<DeleteOutlined />}
+            onClick={handleBatchDelete}
+          >
+            批量删除 {selectedIds.length ? `(${selectedIds.length})` : ""}
+          </Button>
           <Button type="primary" icon={<UploadOutlined />} onClick={() => navigate("/documents/upload")}>
             上传文档
           </Button>
@@ -123,11 +220,37 @@ export function DocumentsPage() {
         <div className="documents-toolbar">
           <Input
             prefix={<SearchOutlined />}
-            placeholder="按标题、文件名或摘要筛选"
+            placeholder="按标题、文件名、摘要搜索"
             value={keyword}
             onChange={(event) => setKeyword(event.target.value)}
             className="table-filter wide"
           />
+          <Select
+            value={fileType}
+            options={FILE_TYPE_OPTIONS}
+            className="documents-type-select"
+            onChange={(value) => {
+              setFileType(value);
+              loadDocuments(keyword, value);
+            }}
+          />
+        </div>
+
+        <div className="documents-selection-bar">
+          <Checkbox
+            checked={allChecked}
+            indeterminate={indeterminate}
+            onChange={(event) => {
+              if (event.target.checked) {
+                setSelectedIds(Array.from(new Set([...selectedIds, ...filtered.map((item) => item.id)])));
+                return;
+              }
+              setSelectedIds((current) => current.filter((id) => !filtered.some((item) => item.id === id)));
+            }}
+          >
+            全选当前列表
+          </Checkbox>
+          <Typography.Text type="secondary">已选 {selectedIds.length} 个文档</Typography.Text>
         </div>
 
         <div className="content-scroll-area documents-list-area">
@@ -137,11 +260,18 @@ export function DocumentsPage() {
                 <article key={item.id} className="document-record">
                   <div className="document-record-top">
                     <Space size="middle" wrap>
-                      <div className="item-icon">
-                        <FileTextOutlined />
-                      </div>
+                      <Checkbox
+                        checked={selectedIds.includes(item.id)}
+                        onChange={(event) => {
+                          setSelectedIds((current) =>
+                            event.target.checked ? [...current, item.id] : current.filter((id) => id !== item.id),
+                          );
+                        }}
+                      />
+                      <div className="item-icon">{getFileTypeIcon(item.file_type)}</div>
                       <Typography.Text strong>{item.title}</Typography.Text>
-                      <Tag bordered={false} className="chip-tag">{item.status}</Tag>
+                      <Tag bordered={false} className="chip-tag">{item.file_type}</Tag>
+                      <Tag bordered={false} className="subtle-tag">{item.status}</Tag>
                     </Space>
 
                     <Space wrap>
@@ -162,6 +292,7 @@ export function DocumentsPage() {
                   <div className="document-meta-line">
                     <span>{item.filename}</span>
                     <span>{item.chunk_count} 个切片</span>
+                    <span>{item.source_file_exists ? "已保存源文件" : "源文件缺失"}</span>
                     <span>创建于 {new Date(item.created_at).toLocaleString()}</span>
                     <span>更新于 {new Date(item.updated_at).toLocaleString()}</span>
                   </div>
@@ -169,14 +300,14 @@ export function DocumentsPage() {
               ))}
             </div>
           ) : (
-            <Empty description="没有符合条件的文档。" />
+            <Empty description={loadingList ? "正在加载文档..." : "没有符合条件的文档。"} />
           )}
         </div>
       </SectionCard>
 
       <Drawer
         title={selectedDocument?.title || "文档详情"}
-        width={760}
+        width={860}
         open={detailOpen}
         onClose={() => setDetailOpen(false)}
       >
@@ -193,13 +324,28 @@ export function DocumentsPage() {
               </div>
             </div>
 
-            <SectionCard title="基础信息" subtitle="来源、摘要与更新时间">
+            <SectionCard title="基础信息" subtitle="文件类型、源文件状态和摘要">
               <Space direction="vertical" size="small" style={{ width: "100%" }}>
                 <Typography.Text>文件名：{selectedDocument.filename}</Typography.Text>
-                <Typography.Text>文件类型：{selectedDocument.content_type || "未知"}</Typography.Text>
+                <Typography.Text>文件类型：{selectedDocument.file_type}</Typography.Text>
+                <Typography.Text>内容类型：{selectedDocument.content_type || "未知"}</Typography.Text>
+                <Typography.Text>源文件状态：{selectedDocument.source_file_exists ? "可下载" : "已缺失"}</Typography.Text>
                 <Typography.Text>更新时间：{new Date(selectedDocument.updated_at).toLocaleString()}</Typography.Text>
                 <Typography.Paragraph>{selectedDocument.summary}</Typography.Paragraph>
+                <Space wrap>
+                  <Button
+                    icon={<DownloadOutlined />}
+                    disabled={!selectedDocument.source_file_exists}
+                    onClick={() => downloadDocumentSource(selectedDocument.id, selectedDocument.filename)}
+                  >
+                    下载源文件
+                  </Button>
+                </Space>
               </Space>
+            </SectionCard>
+
+            <SectionCard title="原文查看" subtitle={selectedDocument.file_type === "PDF" ? "PDF 优先按页回溯" : "解析原文视图"}>
+              <Tabs items={sourceItems} />
             </SectionCard>
 
             <SectionCard title="切片内容" subtitle="文档切片明细">
