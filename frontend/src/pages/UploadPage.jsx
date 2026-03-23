@@ -1,12 +1,12 @@
 import { CheckCircleOutlined, InboxOutlined, LoadingOutlined } from "@ant-design/icons";
-import { Button, Form, Input, Space, Steps, Tag, Typography, Upload, message } from "antd";
+import { Button, Form, Space, Steps, Tag, Typography, Upload, message } from "antd";
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { uploadDocument } from "../api/documents";
 import { SectionCard } from "../components/SectionCard";
 
 const uploadSteps = [
-  { title: "上传文件", description: "提交文档标题与文件" },
+  { title: "上传文件", description: "提交待处理的文档文件" },
   { title: "解析内容", description: "提取文本并完成切片" },
   { title: "建立索引", description: "生成向量并写入知识库" },
 ];
@@ -16,28 +16,21 @@ export function UploadPage() {
   const [fileList, setFileList] = useState([]);
   const [loading, setLoading] = useState(false);
   const [stepIndex, setStepIndex] = useState(-1);
-  const [form] = Form.useForm();
-
-  const isMultiFile = fileList.length > 1;
   const selectedCount = fileList.length;
 
   const helperText = useMemo(() => {
     if (!selectedCount) return "当前支持 TXT、PDF、DOCX 文件。";
     if (selectedCount === 1) return `已选择 1 个文件：${fileList[0].name}`;
-    return `已选择 ${selectedCount} 个文件，多文件上传时将默认使用文件名作为标题。`;
+    return `已选择 ${selectedCount} 个文件，系统会默认使用原文件名生成文档名。`;
   }, [fileList, selectedCount]);
 
-  const handleSubmit = async (values) => {
+  const handleSubmit = async () => {
     if (!fileList.length) {
       message.warning("请先选择文件。");
       return;
     }
 
     const formData = new FormData();
-    const title = (values.title || "").trim();
-    if (!isMultiFile && title) {
-      formData.append("title", title);
-    }
     fileList.forEach((file) => {
       formData.append("files", file.originFileObj);
     });
@@ -49,12 +42,20 @@ export function UploadPage() {
       setStepIndex(1);
       setStepIndex(2);
       const result = await uploadDocument(formData);
-      const count = result?.items?.length || 0;
-      message.success(count > 1 ? `已完成 ${count} 个文件上传并建立索引。` : "文档上传完成，已写入索引。");
+      const successCount = result?.items?.length || 0;
+      const failedCount = result?.failed_items?.length || 0;
+
+      if (successCount && failedCount) {
+        message.warning(`成功上传 ${successCount} 个文件，失败 ${failedCount} 个。重复文档已跳过。`);
+      } else if (successCount > 1) {
+        message.success(`已完成 ${successCount} 个文件上传并建立索引。`);
+      } else {
+        message.success("文档上传完成，已写入索引。");
+      }
+
       setFileList([]);
-      form.resetFields();
       setStepIndex(3);
-      setTimeout(() => navigate("/documents"), 800);
+      window.setTimeout(() => navigate("/documents"), 800);
     } catch (error) {
       const detail = error.response?.data?.detail;
       message.error(detail || "上传失败，请稍后重试。");
@@ -87,21 +88,11 @@ export function UploadPage() {
           title="上传资料"
           subtitle="支持一次选择多个文件并批量建立索引"
         >
-          <Form form={form} layout="vertical" onFinish={handleSubmit} className="upload-form">
+          <Form layout="vertical" onFinish={handleSubmit} className="upload-form">
             <Form.Item
-              label="文档标题"
-              name="title"
-              rules={
-                isMultiFile
-                  ? []
-                  : [{ required: true, message: "请输入文档标题。" }]
-              }
-              extra={isMultiFile ? "多文件上传时将自动使用文件名作为标题。" : "单文件上传时可自定义标题。"}
+              label="上传文件"
+              extra="系统会默认使用原文件名生成文档名，上传成功后可在文档管理中修改。"
             >
-              <Input placeholder="例如：季度安全制度汇编" disabled={isMultiFile} />
-            </Form.Item>
-
-            <Form.Item label="上传文件">
               <Upload.Dragger
                 multiple
                 fileList={fileList}

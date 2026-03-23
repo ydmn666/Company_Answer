@@ -1,6 +1,7 @@
 import json
 import logging
 import re
+import threading
 from datetime import datetime
 from io import BytesIO
 from pathlib import Path
@@ -14,6 +15,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.logging_utils import log_event
+from app.db.session import SessionLocal
 from app.models.document import Document
 from app.models.document_chunk import DocumentChunk
 from app.schemas.documents import (
@@ -36,6 +38,8 @@ HEADING_PATTERN = re.compile(r"^(#{1,6}\s+.+|第[一二三四五六七八九十�
 SENTENCE_PATTERN = re.compile(r"(?<=[。！？；.!?;])")
 SUPPORTED_FILE_TYPES = {"PDF", "DOCX", "TXT"}
 logger = logging.getLogger(__name__)
+PROCESSING_HINT = "文档处理中，暂不可查看完整内容。完成后会自动刷新状态。"
+FAILED_HINT = "文档处理失败，请重新上传或删除后重试。"
 
 
 def _storage_root() -> Path:
@@ -167,7 +171,7 @@ def _extract_text_payload(
             page_texts = extract_text_with_ocr(content)
 
         if not page_texts:
-            fallback = "当前 PDF 未提取到有效文本，文件可能是扫描件或图片型 PDF。"
+            fallback = "当前 PDF 未提取到有效文本，可能是扫描件或图片型 PDF。"
             return fallback, [{"content": fallback, "section_title": "解析提示", "page_no": None, "chunk_type": "note"}], []
 
         raw_pages: list[str] = []
@@ -191,7 +195,7 @@ def _extract_text_payload(
 def _build_chunk_payloads(raw_text: str, blocks: list[dict[str, Any]]) -> list[dict[str, Any]]:
     source_blocks = blocks or [
         {
-            "content": raw_text.strip() or "未能从上传文件中提取有效文本内容。",
+            "content": raw_text.strip() or "未能从上传文档中提取有效文本内容。",
             "section_title": None,
             "page_no": None,
             "chunk_type": "paragraph",
@@ -296,6 +300,132 @@ def _serialize_document_item(document: Document) -> DocumentItem:
     )
 
 
+def ensure_unique_titles(
+    db: Session,
+    titles: list[str],
+    owner_id: str | None = None,
+) -> None:
+    normalized = [title.strip() for title in titles if title and title.strip()]
+    duplicates_in_request = {name for name in normalized if normalized.count(name) > 1}
+    if duplicates_in_request:
+        duplicate_title = sorted(duplicates_in_request)[0]
+        raise ValueError(f"document title duplicated in request: {duplicate_title}")
+
+    for title in normalized:
+        query = db.query(Document).filter(Document.title == title)
+        if owner_id:
+            query = query.filter(Document.owner_id == owner_id)
+        existing = query.first()
+        if existing:
+            raise ValueError(f"document title already exists: {title}")
+
+
+def _create_document_placeholder(
+    db: Session,
+    title: str,
+    filename: str,
+    content_type: str | None,
+    content: bytes,
+    owner_id: str | None = None,
+) -> UploadDocumentResponse:
+    safe_filename = Path(filename).name or "uploaded.bin"
+    now = datetime.utcnow()
+    document = Document(
+        owner_id=owner_id,
+        title=title.strip(),
+        filename=safe_filename,
+        content_type=content_type,
+        file_type=_normalize_file_type(safe_filename, content_type),
+        status="processing",
+        summary=PROCESSING_HINT,
+        source_text="",
+        source_pages_json=None,
+        chunk_count=0,
+        updated_at=now,
+    )
+    db.add(document)
+    db.flush()
+
+    source_path = _save_source_file(document.id, safe_filename, content)
+    document.source_file_path = str(source_path)
+    document.source_file_size = len(content)
+    db.commit()
+    db.refresh(document)
+
+    return UploadDocumentResponse(
+        id=document.id,
+        title=document.title,
+        status=document.status,
+        chunk_count=document.chunk_count,
+    )
+
+
+def _process_document_placeholder(
+    document_id: str,
+    filename: str,
+    content_type: str | None,
+    content: bytes,
+) -> None:
+    started = datetime.utcnow()
+    safe_filename = Path(filename).name or "uploaded.bin"
+    db = SessionLocal()
+    try:
+        document = db.query(Document).filter(Document.id == document_id).first()
+        if not document:
+            log_event(
+                logger,
+                "document.create.missing_placeholder",
+                level=logging.ERROR,
+                document_id=document_id,
+                filename=safe_filename,
+            )
+            return
+
+        raw_text, blocks, source_pages = _extract_text_payload(content, safe_filename, content_type)
+        chunk_payloads = _build_chunk_payloads(raw_text, blocks)
+        document.summary = raw_text[:220] if raw_text else "No valid text extracted."
+        document.source_text = raw_text
+        document.source_pages_json = json.dumps(source_pages, ensure_ascii=False) if source_pages else None
+        document.chunk_count = len(chunk_payloads)
+        _rebuild_chunks(db, document, chunk_payloads)
+        document.status = "indexed"
+        document.updated_at = datetime.utcnow()
+        db.commit()
+        db.refresh(document)
+        elapsed_ms = round((datetime.utcnow() - started).total_seconds() * 1000, 2)
+        log_event(
+            logger,
+            "document.create.completed",
+            document_id=document.id,
+            title=document.title,
+            filename=document.filename,
+            file_type=document.file_type,
+            chunk_count=document.chunk_count,
+            elapsed_ms=elapsed_ms,
+        )
+    except Exception as exc:
+        db.rollback()
+        failed_document = db.query(Document).filter(Document.id == document_id).first()
+        if failed_document:
+            failed_document.status = "failed"
+            failed_document.summary = FAILED_HINT
+            failed_document.source_text = ""
+            failed_document.source_pages_json = None
+            failed_document.chunk_count = 0
+            failed_document.updated_at = datetime.utcnow()
+            db.commit()
+        log_event(
+            logger,
+            "document.create.failed",
+            level=logging.ERROR,
+            document_id=document_id,
+            filename=safe_filename,
+            error=repr(exc),
+        )
+    finally:
+        db.close()
+
+
 def create_document(
     db: Session,
     title: str,
@@ -304,52 +434,21 @@ def create_document(
     content: bytes,
     owner_id: str | None = None,
 ) -> UploadDocumentResponse:
-    started = datetime.utcnow()
-    raw_text, blocks, source_pages = _extract_text_payload(content, filename, content_type)
-    chunk_payloads = _build_chunk_payloads(raw_text, blocks)
-    now = datetime.utcnow()
-    document = Document(
-        owner_id=owner_id,
-        title=title.strip(),
+    result = _create_document_placeholder(
+        db=db,
+        title=title,
         filename=filename,
         content_type=content_type,
-        file_type=_normalize_file_type(filename, content_type),
-        status="processing",
-        summary=raw_text[:220] if raw_text else "未提取到有效文本。",
-        source_text=raw_text,
-        source_pages_json=json.dumps(source_pages, ensure_ascii=False) if source_pages else None,
-        chunk_count=len(chunk_payloads),
-        updated_at=now,
+        content=content,
+        owner_id=owner_id,
     )
-    db.add(document)
-    db.flush()
-
-    source_path = _save_source_file(document.id, filename, content)
-    document.source_file_path = str(source_path)
-    document.source_file_size = len(content)
-
-    _rebuild_chunks(db, document, chunk_payloads)
-    document.status = "indexed"
-    document.updated_at = now
-    db.commit()
-    db.refresh(document)
-    elapsed_ms = round((datetime.utcnow() - started).total_seconds() * 1000, 2)
-    log_event(
-        logger,
-        "document.create.completed",
-        document_id=document.id,
-        title=document.title,
-        filename=document.filename,
-        file_type=document.file_type,
-        chunk_count=document.chunk_count,
-        elapsed_ms=elapsed_ms,
+    worker = threading.Thread(
+        target=_process_document_placeholder,
+        args=(result.id, filename, content_type, content),
+        daemon=True,
     )
-    return UploadDocumentResponse(
-        id=document.id,
-        title=document.title,
-        status=document.status,
-        chunk_count=document.chunk_count,
-    )
+    worker.start()
+    return result
 
 
 def list_documents(db: Session, query: str | None = None, file_type: str | None = None) -> DocumentListResponse:
@@ -377,7 +476,7 @@ def get_document(db: Session, document_id: str) -> DocumentDetailResponse | None
     return DocumentDetailResponse(
         **item.model_dump(),
         content_type=document.content_type,
-        source_text=document.source_text,
+        source_text=document.source_text or (PROCESSING_HINT if document.status != "indexed" else ""),
         source_pages=_serialize_source_pages(document),
         chunks=[
             DocumentChunkItem(

@@ -90,8 +90,15 @@ class UploadDocumentResponse(BaseModel):
     chunk_count: int
 
 
+class UploadDocumentFailureItem(BaseModel):
+    filename: str
+    title: str
+    message: str
+
+
 class UploadDocumentsResponse(BaseModel):
     items: list[UploadDocumentResponse]
+    failed_items: list[UploadDocumentFailureItem] = Field(default_factory=list)
 
 
 class UpdateDocumentRequest(BaseModel):
