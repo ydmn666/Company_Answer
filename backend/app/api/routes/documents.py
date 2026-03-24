@@ -75,7 +75,7 @@ def get_documents(
     query: str | None = Query(default=None),
     file_type: str | None = Query(default=None),
     db: Session = Depends(get_db),
-    _: User = Depends(require_admin),
+    _: User = Depends(get_current_user),
 ) -> DocumentListResponse:
     return list_documents(db, query, file_type)
 

@@ -26,6 +26,7 @@ import {
   message,
 } from "antd";
 import { useNavigate } from "react-router-dom";
+import { useAuthStore } from "../store/auth";
 import {
   batchDeleteDocuments,
   deleteDocument,
@@ -87,6 +88,8 @@ function getStatusMeta(status) {
 
 export function DocumentsPage() {
   const navigate = useNavigate();
+  const user = useAuthStore((state) => state.user);
+  const canManageDocuments = user?.role === "admin";
   const [documents, setDocuments] = useState([]);
   const [keyword, setKeyword] = useState("");
   const [fileType, setFileType] = useState("");
@@ -249,17 +252,21 @@ export function DocumentsPage() {
         </div>
 
         <div className="page-topbar-actions">
-          <Button
-            danger
-            disabled={!selectedIds.length}
-            icon={<DeleteOutlined />}
-            onClick={handleBatchDelete}
-          >
-            批量删除 {selectedIds.length ? `(${selectedIds.length})` : ""}
-          </Button>
-          <Button type="primary" icon={<UploadOutlined />} onClick={() => navigate("/documents/upload")}>
-            上传文档
-          </Button>
+          {canManageDocuments ? (
+            <>
+              <Button
+                danger
+                disabled={!selectedIds.length}
+                icon={<DeleteOutlined />}
+                onClick={handleBatchDelete}
+              >
+                {"\u6279\u91cf\u5220\u9664"} {selectedIds.length ? `(${selectedIds.length})` : ""}
+              </Button>
+              <Button type="primary" icon={<UploadOutlined />} onClick={() => navigate("/documents/upload")}>
+                {"\u4e0a\u4f20\u6587\u6863"}
+              </Button>
+            </>
+          ) : null}
         </div>
       </div>
 
@@ -283,22 +290,26 @@ export function DocumentsPage() {
           />
         </div>
 
-        <div className="documents-selection-bar">
-          <Checkbox
-            checked={allChecked}
-            indeterminate={indeterminate}
-            onChange={(event) => {
-              if (event.target.checked) {
-                setSelectedIds(Array.from(new Set([...selectedIds, ...filtered.map((item) => item.id)])));
-                return;
-              }
-              setSelectedIds((current) => current.filter((id) => !filtered.some((item) => item.id === id)));
-            }}
-          >
-            全选当前列表
-          </Checkbox>
-          <Typography.Text type="secondary">已选 {selectedIds.length} 个文档</Typography.Text>
-        </div>
+        {canManageDocuments ? (
+          <div className="documents-selection-bar">
+            <Checkbox
+              checked={allChecked}
+              indeterminate={indeterminate}
+              onChange={(event) => {
+                if (event.target.checked) {
+                  setSelectedIds(Array.from(new Set([...selectedIds, ...filtered.map((item) => item.id)])));
+                  return;
+                }
+                setSelectedIds((current) => current.filter((id) => !filtered.some((item) => item.id === id)));
+              }}
+            >
+              {"\u5168\u9009\u5f53\u524d\u5217\u8868"}
+            </Checkbox>
+            <Typography.Text type="secondary">
+              {"\u5df2\u9009"} {selectedIds.length} {"\u4e2a\u6587\u6863"}
+            </Typography.Text>
+          </div>
+        ) : null}
 
         <div className="content-scroll-area documents-list-area">
           {filtered.length ? (
@@ -311,14 +322,16 @@ export function DocumentsPage() {
                   <article key={item.id} className="document-record">
                     <div className="document-record-top">
                       <Space size="middle" wrap>
-                        <Checkbox
-                          checked={selectedIds.includes(item.id)}
-                          onChange={(event) => {
-                            setSelectedIds((current) =>
-                              event.target.checked ? [...current, item.id] : current.filter((id) => id !== item.id),
-                            );
-                          }}
-                        />
+                        {canManageDocuments ? (
+                          <Checkbox
+                            checked={selectedIds.includes(item.id)}
+                            onChange={(event) => {
+                              setSelectedIds((current) =>
+                                event.target.checked ? [...current, item.id] : current.filter((id) => id !== item.id),
+                              );
+                            }}
+                          />
+                        ) : null}
                         <div className="item-icon">{getFileTypeIcon(item.file_type)}</div>
                         <Typography.Text strong>{item.title}</Typography.Text>
                         <Tag bordered={false} className="chip-tag">{item.file_type}</Tag>
@@ -327,14 +340,18 @@ export function DocumentsPage() {
 
                       <Space wrap>
                         <Button icon={<EyeOutlined />} onClick={() => openDetail(item.id)}>
-                          查看详情
+                          {"\u67e5\u770b\u8be6\u60c5"}
                         </Button>
-                        <Button icon={<EditOutlined />} onClick={() => openEdit(item)}>
-                          修改
-                        </Button>
-                        <Button danger icon={<DeleteOutlined />} onClick={() => handleDeleteDocument(item)}>
-                          删除
-                        </Button>
+                        {canManageDocuments ? (
+                          <>
+                            <Button icon={<EditOutlined />} onClick={() => openEdit(item)}>
+                              {"\u4fee\u6539"}
+                            </Button>
+                            <Button danger icon={<DeleteOutlined />} onClick={() => handleDeleteDocument(item)}>
+                              {"\u5220\u9664"}
+                            </Button>
+                          </>
+                        ) : null}
                       </Space>
                     </div>
 

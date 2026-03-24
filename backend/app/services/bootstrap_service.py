@@ -130,6 +130,7 @@ def _backfill_chunk_embeddings(db: Session) -> None:
 
 def seed_demo_data(db: Session) -> None:
     _ensure_user(db, "admin", "System Admin", "admin")
+    _ensure_user(db, "admin2", "Operations Admin", "admin")
     employee = _ensure_user(db, "employee", "Knowledge Employee", "employee")
 
     _remove_demo_documents(db)
