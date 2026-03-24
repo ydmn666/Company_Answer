@@ -68,12 +68,10 @@ export function WorkspaceLayout() {
   }, [isDraftSession, sessions]);
 
   const navItems = [
-    { key: "/chat", icon: <MessageOutlined />, label: "知识问答" },
+    { key: "/chat", icon: <MessageOutlined />, label: "\u77e5\u8bc6\u95ee\u7b54" },
+    { key: "/documents", icon: <FileTextOutlined />, label: "\u6587\u6863\u7ba1\u7406" },
     ...(user?.role === "admin"
-      ? [
-          { key: "/documents", icon: <FileTextOutlined />, label: "文档管理" },
-          { key: "/documents/upload", icon: <UploadOutlined />, label: "上传文档" },
-        ]
+      ? [{ key: "/documents/upload", icon: <UploadOutlined />, label: "\u4e0a\u4f20\u6587\u6863" }]
       : []),
   ];
 

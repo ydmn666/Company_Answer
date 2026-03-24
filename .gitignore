@@ -23,3 +23,4 @@ backend/logs/
 backend/data/source_files/
 *.docx
 _*.docx
+hf-clean/

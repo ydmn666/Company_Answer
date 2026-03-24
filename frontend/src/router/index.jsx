@@ -54,12 +54,10 @@ export function AppRouter() {
           children: [
             { index: true, element: <HomeRedirect /> },
             { path: "/chat", element: <ChatPage /> },
+            { path: "/documents", element: <DocumentsPage /> },
             {
               element: <AdminGuard />,
-              children: [
-                { path: "/documents", element: <DocumentsPage /> },
-                { path: "/documents/upload", element: <UploadPage /> },
-              ],
+              children: [{ path: "/documents/upload", element: <UploadPage /> }],
             },
           ],
         },
