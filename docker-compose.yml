@@ -6,8 +6,8 @@ services:
       POSTGRES_DB: ${POSTGRES_DB}
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-    ports:
-      - "${POSTGRES_PORT}:5432"
+    expose:
+      - "5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./docker/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
@@ -20,8 +20,8 @@ services:
   redis:
     image: redis:7-alpine
     container_name: ekr-redis
-    ports:
-      - "${REDIS_PORT}:6379"
+    expose:
+      - "6379"
     command: ["redis-server", "--appendonly", "yes"]
     volumes:
       - redis_data:/data
@@ -46,8 +46,8 @@ services:
       SENTENCE_TRANSFORMERS_HOME: /models/hf/sentence_transformers
       HF_HUB_OFFLINE: "1"
       TRANSFORMERS_OFFLINE: "1"
-    ports:
-      - "${BACKEND_PORT}:8000"
+    expose:
+      - "8000"
     depends_on:
       postgres:
         condition: service_healthy
@@ -66,13 +66,24 @@ services:
       - .env
     environment:
       VITE_API_BASE_URL: ${VITE_API_BASE_URL}
-    ports:
-      - "${FRONTEND_PORT}:5173"
+    expose:
+      - "5173"
     depends_on:
       - backend
     volumes:
       - ./frontend:/app
       - /app/node_modules
+
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: ekr-nginx
+    depends_on:
+      - frontend
+      - backend
+    ports:
+      - "${NGINX_PORT}:80"
+    volumes:
+      - ./docker/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
 
 volumes:
   postgres_data:
