@@ -31,10 +31,12 @@ REFERENTIAL_PATTERN = re.compile(r"^(那|那么|这个|这个制度|该|其|它|
 SHORT_FOLLOWUP_PATTERN = re.compile(r"(呢|吗|么|如何|多久|多少|哪些|怎么|为什么|是否)")
 
 
+# 统一输出问答服务的结构化日志。
 def _trace(event: str, **payload) -> None:
     log_event(logger, event, **payload)
 
 
+# 获取现有会话，若不存在则按当前问题新建会话。
 def _ensure_session(db: Session, user: User, session_id: str | None, question: str) -> ChatSession:
     if session_id:
         session = (
@@ -55,21 +57,25 @@ def _ensure_session(db: Session, user: User, session_id: str | None, question: s
     return session
 
 
+# 立即提交会话，确保前端能在后续流程中看到新会话。
 def _commit_session_visibility(db: Session, session: ChatSession) -> ChatSession:
     db.commit()
     db.refresh(session)
     return session
 
 
+# 按时间顺序整理会话消息。
 def _sorted_messages(session: ChatSession) -> list[ChatMessage]:
     return sorted(session.messages, key=lambda item: item.created_at)
 
 
+# 提取最近几轮消息，供问题改写和生成回答使用。
 def _build_recent_history(session: ChatSession, limit: int = CONTEXT_MESSAGE_LIMIT) -> list[dict]:
     messages = _sorted_messages(session)
     return [{"role": item.role, "content": item.content} for item in messages[-limit:]]
 
 
+# 从最近消息中提取追问最可能指向的主题内容。
 def _extract_recent_subject(history_messages: list[dict]) -> str:
     for item in reversed(history_messages):
         content = (item.get("content") or "").strip()
@@ -84,6 +90,7 @@ def _extract_recent_subject(history_messages: list[dict]) -> str:
     return ""
 
 
+# 判断当前问题是否像是依赖前文语境的追问。
 def _looks_like_followup(question: str, history_messages: list[dict]) -> bool:
     trimmed = (question or "").strip()
     if not trimmed or not history_messages:
@@ -97,6 +104,7 @@ def _looks_like_followup(question: str, history_messages: list[dict]) -> bool:
     return False
 
 
+# 对疑似追问进行轻量问题改写，补全上下文指代。
 def _rewrite_question(question: str, history_messages: list[dict]) -> str:
     trimmed = (question or "").strip()
     if not trimmed:
@@ -110,11 +118,13 @@ def _rewrite_question(question: str, history_messages: list[dict]) -> str:
     return f"基于前文“{anchor[:80]}”，回答这个追问：{trimmed}"
 
 
+# 组装发给模型的对话消息列表。
 def _build_generation_messages(history_messages: list[dict], rewritten_question: str) -> list[dict]:
     recent_history = history_messages[-CONTEXT_MESSAGE_LIMIT:]
     return [*recent_history, {"role": "user", "content": rewritten_question}]
 
 
+# 从检索结果中构建前端展示用的引用片段。
 def _build_citations(chunks: list[dict]) -> list[dict]:
     return [
         {
@@ -130,6 +140,7 @@ def _build_citations(chunks: list[dict]) -> list[dict]:
     ]
 
 
+# 统一完成问题改写、缓存检查、知识库指纹生成和检索准备。
 def _prepare_rag(
     db: Session,
     session: ChatSession,
@@ -153,6 +164,7 @@ def _prepare_rag(
     return rewritten_question, fingerprint, cached, retrieval_context, history_messages
 
 
+# 将一轮用户提问和助手回答落库保存。
 def _persist_answer(
     db: Session,
     session: ChatSession,
@@ -173,6 +185,7 @@ def _persist_answer(
     db.commit()
 
 
+# 执行一次完整的非流式问答流程。
 def ask_question(
     db: Session,
     user: User,
@@ -205,6 +218,7 @@ def ask_question(
     )
 
 
+# 执行一次完整的流式问答流程，并按 SSE 事件逐步返回结果。
 def stream_question(
     db: Session,
     user: User,
@@ -321,6 +335,7 @@ def stream_question(
         )
 
 
+# 返回当前用户的会话列表摘要。
 def list_sessions(db: Session, user: User) -> list[ChatSessionItem]:
     sessions = (
         db.query(ChatSession)
@@ -342,6 +357,7 @@ def list_sessions(db: Session, user: User) -> list[ChatSessionItem]:
     ]
 
 
+# 返回指定会话的完整消息历史。
 def get_session(db: Session, user: User, session_id: str) -> ChatSessionDetail | None:
     session = (
         db.query(ChatSession)
@@ -370,6 +386,7 @@ def get_session(db: Session, user: User, session_id: str) -> ChatSessionDetail |
     )
 
 
+# 更新会话标题和置顶状态。
 def update_session(
     db: Session,
     user: User,
@@ -399,6 +416,7 @@ def update_session(
     return get_session(db, user, session_id)
 
 
+# 删除指定用户的会话。
 def delete_session(db: Session, user: User, session_id: str) -> SessionActionResponse | None:
     session = (
         db.query(ChatSession)

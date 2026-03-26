@@ -10,6 +10,7 @@ engine = create_engine(settings.database_url, future=True)
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
 
 
+# ä¸ºæ¯æ¬¡è¯·æ±æä¾æ°æ®åºä¼è¯ï¼å¹¶å¨è¯·æ±ç»æåèªå¨å³é­ã
 def get_db():
     # FastAPI 依赖注入入口。
     db = SessionLocal()

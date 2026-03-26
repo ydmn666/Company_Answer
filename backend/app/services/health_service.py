@@ -8,6 +8,7 @@ from app.db.session import SessionLocal
 from app.services.cache_service import _redis_client
 
 
+# ç»ä¸å°è£åä¸ªå¥åº·æ£æ¥ç»ä»¶çè¿åç»æã
 def _component(status: str, detail: str | None = None, **extra) -> dict:
     payload = {"status": status}
     if detail is not None:
@@ -16,6 +17,7 @@ def _component(status: str, detail: str | None = None, **extra) -> dict:
     return payload
 
 
+# æ£æ¥æ°æ®åºè¿æ¥æ¯å¦å¯ç¨ã
 def check_database() -> dict:
     db = SessionLocal()
     try:
@@ -27,6 +29,7 @@ def check_database() -> dict:
         db.close()
 
 
+# æ£æ¥ Redis ç¼å­æå¡æ¯å¦å¯ç¨ã
 def check_redis() -> dict:
     if not settings.redis_cache_enabled:
         return _component("disabled", detail="redis cache disabled")
@@ -42,6 +45,7 @@ def check_redis() -> dict:
         return _component("error", detail=str(exc))
 
 
+# æ£æ¥æ¥å¿ç®å½æ¯å¦å¯åã
 def check_log_directory() -> dict:
     try:
         log_path = get_log_file_path()
@@ -55,6 +59,7 @@ def check_log_directory() -> dict:
         return _component("error", detail=str(exc))
 
 
+# æ£æ¥ææ¡£å­å¨ç®å½æ¯å¦å¯åã
 def check_document_storage() -> dict:
     try:
         storage_dir = Path(settings.document_storage_dir)
@@ -69,6 +74,7 @@ def check_document_storage() -> dict:
         return _component("error", detail=str(exc))
 
 
+# æ±æ»ææåºç¡ç»ä»¶çå¥åº·ç¶æï¼çææ´ä½å¥åº·å¿«ç§ã
 def health_snapshot() -> dict:
     components = {
         "database": check_database(),

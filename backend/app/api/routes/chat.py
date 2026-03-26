@@ -25,6 +25,7 @@ from app.services.chat_service import (
 router = APIRouter()
 
 
+# å¤çéæµå¼é®ç­è¯·æ±å¹¶è¿åå®æ´ç­æ¡ã
 @router.post("/ask", response_model=AskResponse)
 def ask(
     payload: AskRequest,
@@ -34,6 +35,7 @@ def ask(
     return ask_question(db, current_user, payload.question, payload.session_id, payload.provider)
 
 
+# å¤çæµå¼é®ç­è¯·æ±ï¼æ SSE äºä»¶æµè¿ååç­çæ®µã
 @router.post("/ask-stream")
 def ask_stream(
     payload: AskRequest,
@@ -44,6 +46,7 @@ def ask_stream(
     return StreamingResponse(stream, media_type="text/event-stream")
 
 
+# è¿åå½åç¨æ·çä¼è¯åè¡¨ã
 @router.get("/sessions", response_model=list[ChatSessionItem])
 def get_sessions(
     db: Session = Depends(get_db),
@@ -52,6 +55,7 @@ def get_sessions(
     return list_sessions(db, current_user)
 
 
+# è¿ååä¸ªä¼è¯çå®æ´æ¶æ¯è¯¦æã
 @router.get("/sessions/{session_id}", response_model=ChatSessionDetail)
 def get_session_detail(
     session_id: str,
@@ -64,6 +68,7 @@ def get_session_detail(
     return session
 
 
+# æ´æ°ä¼è¯æ é¢æç½®é¡¶ç¶æã
 @router.patch("/sessions/{session_id}", response_model=ChatSessionDetail)
 def patch_session(
     session_id: str,
@@ -77,6 +82,7 @@ def patch_session(
     return session
 
 
+# å é¤æå®ä¼è¯åå¶å³èæ¶æ¯ã
 @router.delete("/sessions/{session_id}", response_model=SessionActionResponse)
 def remove_session(
     session_id: str,

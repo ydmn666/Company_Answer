@@ -22,19 +22,23 @@ KEYWORD_TERM_LIMIT = 8
 logger = logging.getLogger(__name__)
 
 
+# ç»ä¸è¾åºæ£ç´¢é¾è·¯çç»æåæ¥å¿ã
 def _trace(event: str, **payload) -> None:
     log_event(logger, event, **payload)
 
 
+# å°ä¸­è±æé®é¢åæç»ä¸çæ£ç´¢ tokenã
 def tokenize(text: str) -> list[str]:
     return [token.lower() for token in TOKEN_PATTERN.findall(text or "")]
 
 
+# å½ä¸åç¨æ·é®é¢ææ¬ï¼ä¾¿äºç¼å­ key åæ¯è¾ã
 def normalize_question(text: str) -> str:
     normalized = re.sub(r"\s+", " ", (text or "").strip().lower())
     return normalized
 
 
+# æ©å±å³é®è¯ç²åº¦ï¼å¢å¼ºä¸­ææ£ç´¢å¬åè½åã
 def expand_terms(text: str) -> set[str]:
     terms = set(tokenize(text))
     expanded = set(terms)
@@ -47,6 +51,7 @@ def expand_terms(text: str) -> set[str]:
     return expanded
 
 
+# è®¡ç®ä¸¤ä¸ªåéä¹é´çä½å¼¦ç¸ä¼¼åº¦ã
 def cosine_similarity(left: list[float] | None, right: list[float] | None) -> float:
     if left is None or right is None:
         return 0.0
@@ -58,6 +63,7 @@ def cosine_similarity(left: list[float] | None, right: list[float] | None) -> fl
     return numerator / (left_norm * right_norm)
 
 
+# å¨æ¬å°æ¨¡åä¸å¯ç¨æ¶çæä¸ä¸ªè½»éåå¸åéä½ä¸ºååº embeddingã
 def _local_hash_embedding(text: str) -> list[float]:
     tokens = tokenize(text)
     if not tokens:
@@ -77,6 +83,7 @@ def _local_hash_embedding(text: str) -> list[float]:
 
 
 @lru_cache(maxsize=1)
+# æå è½½æ¬å° embedding æ¨¡åã
 def _load_sentence_transformer():
     try:
         from sentence_transformers import SentenceTransformer
@@ -89,6 +96,7 @@ def _load_sentence_transformer():
 
 
 @lru_cache(maxsize=1)
+# æå è½½ reranker æ¨¡åã
 def _load_cross_encoder():
     if not settings.retrieval_reranker_enabled:
         return None
@@ -103,12 +111,14 @@ def _load_cross_encoder():
         return None
 
 
+# è¿åå½åå®éçæç embedding æ¨¡ååç§°ã
 def current_embedding_model_name() -> str:
     if settings.retrieval_embedding_backend == "sentence_transformers" and _load_sentence_transformer():
         return settings.retrieval_embedding_model
     return "local-hash"
 
 
+# ä¸ºé®é¢æåçææ¬çæåéè¡¨ç¤ºã
 def generate_embedding(text: str) -> list[float]:
     started = time.perf_counter()
     if settings.retrieval_embedding_backend == "sentence_transformers":
@@ -135,6 +145,7 @@ def generate_embedding(text: str) -> list[float]:
     return _local_hash_embedding(text)
 
 
+# ç¨å³é®è¯é¢ç­å BM25 å¬ååéåçã
 def _keyword_candidates(db: Session, question: str, limit: int) -> list[DocumentChunk]:
     started = time.perf_counter()
     terms = list(expand_terms(question))[:KEYWORD_TERM_LIMIT]
@@ -183,6 +194,7 @@ def _keyword_candidates(db: Session, question: str, limit: int) -> list[Document
     return result
 
 
+# ç¨åéç¸ä¼¼åº¦å¬ååéåçã
 def _vector_candidates(db: Session, query_embedding: list[float], limit: int) -> list[DocumentChunk]:
     started = time.perf_counter()
     model_name = current_embedding_model_name()
@@ -225,6 +237,7 @@ def _vector_candidates(db: Session, query_embedding: list[float], limit: int) ->
         return result
 
 
+# ä¸ºå·²å½ä¸­çåçè¡¥åååé»æ¥çæ®µï¼å¢å¼ºä¸ä¸æè¿ç»­æ§ã
 def _expand_neighbors(
     db: Session,
     selected_chunks: list[DocumentChunk],
@@ -264,6 +277,7 @@ def _expand_neighbors(
     return result
 
 
+# å¯¹å¬åç»æåéæï¼æåæç»éå¥åç­é¶æ®µççæ®µè´¨éã
 def rerank_chunks(question: str, query_embedding: list[float], chunks: list[DocumentChunk]) -> list[DocumentChunk]:
     started = time.perf_counter()
     if not chunks:
@@ -312,6 +326,7 @@ def rerank_chunks(question: str, query_embedding: list[float], chunks: list[Docu
         return chunks
 
 
+# æ§è¡å®æ´æ··åæ£ç´¢æµç¨å¹¶è¿åæç»å¼ç¨çæ®µã
 def retrieve_top_chunks(db: Session, question: str, top_k: int | None = None) -> list[dict]:
     started = time.perf_counter()
     _trace("retrieve_top_chunks.start", question_len=len(question or ""))

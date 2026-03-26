@@ -7,6 +7,7 @@ from app.models.user import User
 from app.services.security_service import decode_token
 
 
+# ä»è¯·æ±å¤´è§£æå¹¶æ ¡éªå½åç»å½ç¨æ·ã
 def get_current_user(
     authorization: str | None = Header(default=None),
     db: Session = Depends(get_db),
@@ -28,6 +29,7 @@ def get_current_user(
     return user
 
 
+# çº¦æå½åæ¥å£åªè½ç±ç®¡çåè§è²è®¿é®ã
 def require_admin(user: User = Depends(get_current_user)) -> User:
     # 管理员专用接口的权限检查。
     if user.role != "admin":

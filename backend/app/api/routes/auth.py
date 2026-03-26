@@ -10,6 +10,7 @@ from app.services.auth_service import get_current_user_info, login_user
 router = APIRouter()
 
 
+# å¤çç»å½è¯·æ±å¹¶è¿å token ä¸å½åç¨æ·ä¿¡æ¯ã
 @router.post("/login", response_model=LoginResponse)
 def login(payload: LoginRequest, db: Session = Depends(get_db)) -> LoginResponse:
     # 登录成功后返回 token + 当前用户信息。
@@ -19,6 +20,7 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)) -> LoginResponse
         raise HTTPException(status_code=401, detail=str(exc)) from exc
 
 
+# è¿åå½åç»å½ç¨æ·çåºç¡èµæï¼ä¾åç«¯æ¢å¤ç»å½ç¶æã
 @router.get("/me", response_model=UserInfo)
 def me(user: User = Depends(get_current_user)) -> UserInfo:
     # 前端刷新后可用这个接口恢复当前用户信息。

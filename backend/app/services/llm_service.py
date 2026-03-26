@@ -22,15 +22,18 @@ STREAM_EMPTY_DATA_LIMIT = 12
 STREAM_RAW_LINE_LOG_LIMIT = 5
 
 
+# ç»ä¸è¾åºæ¨¡åè°ç¨é¾è·¯çç»æåæ¥å¿ã
 def _trace(event: str, **payload) -> None:
     log_event(logger, event, **payload)
 
 
+# è®¡ç®åå¥ä¸é®é¢ä¹é´çè¯é¡¹éååæ°ã
 def _sentence_score(question_tokens: set[str], sentence: str) -> int:
     sentence_tokens = set(tokenize(sentence))
     return len(question_tokens & sentence_tokens)
 
 
+# å°æè¿å¯¹è¯åå²æ ¼å¼åä¸ºå¯æ³¨å¥æ¨¡åæç¤ºè¯çææ¬ã
 def _history_text(messages: list[dict], limit: int = 6) -> str:
     if not messages:
         return "无"
@@ -45,10 +48,12 @@ def _history_text(messages: list[dict], limit: int = 6) -> str:
     return "\n".join(lines) or "无"
 
 
+# å¨æ²¡ææ£ç´¢å½ä¸­ææ¡£æ¶è¿åç»ä¸çååºåç­ã
 def _empty_context_answer() -> str:
     return "当前问题没有命中可直接支撑回答的文档片段，请补充更具体的问题或先查看右侧引用。"
 
 
+# ç¨æ¬å°è½»éè§ååºäºæ£ç´¢çæ®µçæååºåç­ã
 def _local_chat_completion(messages: list[dict], context: list[dict]) -> str:
     if not context:
         return _empty_context_answer()
@@ -86,6 +91,7 @@ def _local_chat_completion(messages: list[dict], context: list[dict]) -> str:
     return f"根据 {joined_titles} 的内容，{''.join(answer_sentences)}"
 
 
+# å°å¤é¨ä¼ å¥ç provider å½ä¸åä¸ºç³»ç»æ¯æçå¼ã
 def _resolve_provider(provider: str | None) -> str:
     requested = (provider or settings.llm_default_provider or "local").lower()
     if requested in {"deepseek", "kimi", "local"}:
@@ -93,6 +99,7 @@ def _resolve_provider(provider: str | None) -> str:
     return "local"
 
 
+# è¿åæå® provider çè°ç¨éç½®ï¼ä¸å¯ç¨æ¶è¿å Noneã
 def _provider_config(provider: str) -> tuple[str, str, str] | None:
     if provider == "deepseek":
         if not settings.deepseek_api_key:
@@ -107,6 +114,7 @@ def _provider_config(provider: str) -> tuple[str, str, str] | None:
     return None
 
 
+# å°æ£ç´¢çæ®µæ¼æè¿ç¨æ¨¡åæç¤ºè¯ä¸­çå¼ç¨ä¸ä¸æã
 def _build_context_text(context: list[dict]) -> str:
     if not context:
         return "无"
@@ -119,6 +127,7 @@ def _build_context_text(context: list[dict]) -> str:
     return "\n\n".join(parts)
 
 
+# è¿åè¿ç¨é®ç­æ¨¡åä½¿ç¨çç³»ç»æç¤ºè¯ã
 def _system_prompt() -> str:
     return (
         "你是企业知识检索系统中的问答助手。"
@@ -129,6 +138,7 @@ def _system_prompt() -> str:
     )
 
 
+# ç»è£è¿ç¨æ¨¡åçè¯·æ±è½½è·ã
 def _build_remote_payload(messages: list[dict], context: list[dict], model: str, stream: bool) -> dict:
     question = messages[-1]["content"] if messages else ""
     history_text = _history_text(messages[:-1])
@@ -147,6 +157,7 @@ def _build_remote_payload(messages: list[dict], context: list[dict], model: str,
     }
 
 
+# ä»æµå¼è¿åçæ®µä¸­æåå¯æ¾ç¤ºçææ¬åå®¹ã
 def _extract_delta_text(delta_content) -> list[str]:
     if isinstance(delta_content, str):
         return [delta_content] if delta_content else []
@@ -161,6 +172,7 @@ def _extract_delta_text(delta_content) -> list[str]:
     return []
 
 
+# è°ç¨è¿ç¨æ¨¡åçæµå¼æ¥å£ï¼å¹¶å¨å¼å¸¸æ¶åéå°æ¬å°åç­ã
 def _stream_remote_chat_completion(provider: str, messages: list[dict], context: list[dict]) -> tuple[Iterator[str], str]:
     if not context:
         _trace("stream.skip_empty_context", provider=provider)
@@ -313,6 +325,7 @@ def _stream_remote_chat_completion(provider: str, messages: list[dict], context:
     return generate(), provider
 
 
+# è°ç¨è¿ç¨æ¨¡åçéæµå¼æ¥å£ï¼å¹¶å¨å¼å¸¸æ¶åéå°æ¬å°åç­ã
 def _remote_chat_completion(provider: str, messages: list[dict], context: list[dict]) -> tuple[str, str]:
     if not context:
         _trace("remote.skip_empty_context", provider=provider)
@@ -364,6 +377,7 @@ def _remote_chat_completion(provider: str, messages: list[dict], context: list[d
     return _local_chat_completion(messages, context), "local"
 
 
+# ç»ä¸å°è£éæµå¼åç­å¥å£ï¼æ provider éæ©æ¬å°æè¿ç¨å®ç°ã
 def chat_completion(messages: list[dict], context: list[dict], provider: str | None = None) -> tuple[str, str]:
     if not context:
         return _empty_context_answer(), "local"
@@ -374,6 +388,7 @@ def chat_completion(messages: list[dict], context: list[dict], provider: str | N
     return _remote_chat_completion(resolved_provider, messages, context)
 
 
+# ç»ä¸å°è£æµå¼åç­å¥å£ï¼æ provider éæ©æ¬å°æè¿ç¨å®ç°ã
 def stream_chat_completion(messages: list[dict], context: list[dict], provider: str | None = None) -> tuple[Iterator[str], str]:
     if not context:
         return iter([_empty_context_answer()]), "local"
@@ -384,6 +399,7 @@ def stream_chat_completion(messages: list[dict], context: list[dict], provider: 
     return _stream_remote_chat_completion(resolved_provider, messages, context)
 
 
+# åºäºæ£ç´¢çæ®µçæåç­ï¼å¹¶éå¸¦å¼ç¨çæ®µè¿åã
 def answer_with_rag(messages: list[dict], chunks: list[dict], provider: str | None = None) -> dict:
     answer, provider_used = chat_completion(messages, chunks, provider)
     citations = [

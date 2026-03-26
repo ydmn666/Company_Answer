@@ -31,6 +31,7 @@ from app.services.document_service import (
 router = APIRouter()
 
 
+# æ¹éæ¥æ¶ä¸ä¼ æä»¶å¹¶ä¸ºæ¯ä¸ªæä»¶åå»ºåå°å¤çä»»å¡ã
 @router.post("/upload", response_model=UploadDocumentsResponse)
 async def upload_document(
     files: list[UploadFile] = File(...),
@@ -70,6 +71,7 @@ async def upload_document(
     return UploadDocumentsResponse(items=results, failed_items=failed_items)
 
 
+# è¿åææ¡£åè¡¨ï¼å¹¶æ¯æå³é®è¯åæä»¶ç±»åç­éã
 @router.get("", response_model=DocumentListResponse)
 def get_documents(
     query: str | None = Query(default=None),
@@ -80,6 +82,7 @@ def get_documents(
     return list_documents(db, query, file_type)
 
 
+# è¿ååä¸ªææ¡£çå®æ´è¯¦æãåæååçä¿¡æ¯ã
 @router.get("/{document_id}", response_model=DocumentDetailResponse)
 def get_document_by_id(
     document_id: str,
@@ -92,6 +95,7 @@ def get_document_by_id(
     return document
 
 
+# è¿ååä¸ªåççä¸ä¸æè¯¦æï¼ä¾¿äºå¼ç¨è¿½è¸ªåææ¥ã
 @router.get("/chunks/{chunk_id}", response_model=DocumentChunkDetailResponse)
 def get_document_chunk_detail(
     chunk_id: str,
@@ -104,6 +108,7 @@ def get_document_chunk_detail(
     return chunk
 
 
+# ä¸è½½ææ¡£åå§æä»¶ã
 @router.get("/{document_id}/download")
 def download_document_source(
     document_id: str,
@@ -118,6 +123,7 @@ def download_document_source(
     return FileResponse(path=path, filename=document.filename, media_type=document.content_type or "application/octet-stream")
 
 
+# ä¿®æ¹ææ¡£æ é¢ææè¦ç­åºç¡ä¿¡æ¯ã
 @router.patch("/{document_id}", response_model=DocumentDetailResponse)
 def patch_document(
     document_id: str,
@@ -131,6 +137,7 @@ def patch_document(
     return document
 
 
+# å é¤åä¸ªææ¡£åå¶å³èåçåæºæä»¶ã
 @router.delete("/{document_id}", response_model=DocumentActionResponse)
 def remove_document(
     document_id: str,
@@ -143,6 +150,7 @@ def remove_document(
     return result
 
 
+# æ¹éå é¤å¤ä¸ªææ¡£ã
 @router.post("/batch-delete", response_model=DocumentBatchDeleteResponse)
 def remove_documents(
     payload: DocumentBatchDeleteRequest,

@@ -16,10 +16,12 @@ DEMO_DOCUMENT_FILENAMES = {"security-policy.txt", "helpdesk-handbook.txt"}
 logger = logging.getLogger(__name__)
 
 
+# 统一输出启动初始化阶段的结构化日志。
 def _trace(event: str, **payload) -> None:
     log_event(logger, event, **payload)
 
 
+# 确保演示账号存在，不存在则创建，存在则按最新配置修正。
 def _ensure_user(
     db: Session,
     username: str,
@@ -46,6 +48,7 @@ def _ensure_user(
     return user
 
 
+# 为演示员工补一条默认会话和首轮问答内容。
 def _ensure_session(db: Session, user_id: str) -> None:
     existing = (
         db.query(ChatSession)
@@ -69,6 +72,7 @@ def _ensure_session(db: Session, user_id: str) -> None:
     )
 
 
+# 用首条用户消息修复历史会话标题。
 def _repair_session_titles(db: Session) -> None:
     sessions = db.query(ChatSession).all()
     for session in sessions:
@@ -82,6 +86,7 @@ def _repair_session_titles(db: Session) -> None:
             session.title = first_user_message.content[:60]
 
 
+# 清理历史演示文档，避免重复启动后样例数据残留。
 def _remove_demo_documents(db: Session) -> None:
     demo_documents = (
         db.query(Document)
@@ -98,6 +103,7 @@ def _remove_demo_documents(db: Session) -> None:
     _trace("demo_documents.remove_done", count=len(demo_documents))
 
 
+# 为缺失或过期的切片向量补齐当前模型生成的 embedding。
 def _backfill_chunk_embeddings(db: Session) -> None:
     current_model = current_embedding_model_name()
     stale_chunks = (
@@ -128,6 +134,7 @@ def _backfill_chunk_embeddings(db: Session) -> None:
     _trace("embedding_backfill.done", model=current_model, chunks=len(stale_chunks))
 
 
+# 启动时初始化演示账号、演示会话和缺失向量数据。
 def seed_demo_data(db: Session) -> None:
     _ensure_user(db, "admin", "System Admin", "admin")
     _ensure_user(db, "admin2", "Operations Admin", "admin")

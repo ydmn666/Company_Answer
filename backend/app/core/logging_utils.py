@@ -37,6 +37,7 @@ class JsonFormatter(logging.Formatter):
         return json.dumps(payload, ensure_ascii=False)
 
 
+# è¿åæ¥å¿æä»¶çç»å¯¹è·¯å¾ï¼å¹¶ç¡®ä¿ç®å½å­å¨ã
 def _log_path() -> Path:
     base = Path(settings.log_dir)
     if not base.is_absolute():
@@ -45,10 +46,12 @@ def _log_path() -> Path:
     return base / "app.log"
 
 
+# å¯¹å¤æ´é²å½åæ¥å¿æä»¶è·¯å¾ï¼ä¾¿äºå¥åº·æ£æ¥åè¿ç»´æ¥çã
 def get_log_file_path() -> Path:
     return _log_path()
 
 
+# åå§åå¨å±æ¥å¿éç½®ï¼ç»ä¸æ§å¶æ§å¶å°ä¸æä»¶è¾åºæ ¼å¼ã
 def configure_logging() -> None:
     root = logging.getLogger()
     level = getattr(logging, settings.log_level.upper(), logging.INFO)
@@ -76,15 +79,18 @@ def configure_logging() -> None:
         root.addHandler(file_handler)
 
 
+# ä¸ºå½åè¯·æ±åå¥ä¸ä¸æä¿¡æ¯ï¼æ¹ä¾¿åç»­æ¥å¿èªå¨å¸¦ä¸ request_id å user_idã
 def set_request_context(request_id: str | None = None, user_id: str | None = None) -> None:
     request_id_var.set(request_id)
     user_id_var.set(user_id)
 
 
+# æ¸çå½åè¯·æ±ä¸ä¸æï¼é¿åä¸ä¸ææ³æ¼å°åç»­è¯·æ±ã
 def clear_request_context() -> None:
     request_id_var.set(None)
     user_id_var.set(None)
 
 
+# ç»ä¸è¾åºç»æåä¸å¡æ¥å¿ï¼åå°åæ¨¡åéå¤æ¼æ¥æ¥å¿å­æ®µã
 def log_event(logger: logging.Logger, event: str, level: int = logging.INFO, **payload: Any) -> None:
     logger.log(level, event, extra={"event": event, "extra_data": payload})

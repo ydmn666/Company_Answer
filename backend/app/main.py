@@ -20,6 +20,7 @@ configure_logging()
 logger = logging.getLogger(__name__)
 
 
+# å¯å¨æ¶ä¸ºæ§è¡¨è¡¥é½ç¼ºå¤±å­æ®µï¼å¼å®¹å·²ææ°æ®åºç»æã
 def _ensure_column(inspector, table_name: str, column_name: str, definition: str) -> None:
     if not inspector.has_table(table_name):
         return
@@ -32,6 +33,7 @@ def _ensure_column(inspector, table_name: str, column_name: str, definition: str
         connection.execute(text(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {definition}"))
 
 
+# ç»ä¸å¤çå¯å¨æ¶çè½»éçº§è¡¨ç»æå¼å®¹ååå²æ°æ®ä¿®å¤ã
 def ensure_schema_compatibility() -> None:
     inspector = inspect(engine)
 
@@ -73,6 +75,7 @@ def ensure_schema_compatibility() -> None:
 
 
 @asynccontextmanager
+# ç®¡çåºç¨å¯å¨åå³é­æµç¨ï¼å®æå»ºè¡¨ãå¼å®¹ä¿®å¤åæ¼ç¤ºæ°æ®åå§åã
 async def lifespan(_: FastAPI):
     log_event(logger, "app.startup.begin", app_env=settings.app_env)
     Base.metadata.create_all(bind=engine)
@@ -106,6 +109,7 @@ app.include_router(api_router, prefix="/api")
 
 
 @app.middleware("http")
+# ä¸ºæ¯ä¸ª HTTP è¯·æ±è¡¥åé¾è·¯æ¥å¿ãè¯·æ±æ è¯åèæ¶ç»è®¡ã
 async def request_logging_middleware(request, call_next):
     request_id = request.headers.get("X-Request-ID") or str(uuid4())
     started = time.perf_counter()
@@ -153,6 +157,7 @@ async def request_logging_middleware(request, call_next):
 
 
 @app.get("/health")
+# æä¾ç³»ç»å¥åº·æ£æ¥å¿«ç§ï¼ä¾¿äºé¨ç½²åææ¥åºç¡ä¾èµç¶æã
 def health_check() -> dict:
     snapshot = health_snapshot()
     log_event(logger, "health.check.completed", status=snapshot["status"])

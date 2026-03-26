@@ -6,6 +6,7 @@ from PIL import Image
 from app.core.config import settings
 
 
+# å¯¹æ«æç PDF å OCR æåï¼è¿åæé¡µæåçææ¬ã
 def extract_text_with_ocr(content: bytes) -> list[tuple[int, str]]:
     if not settings.ocr_enabled:
         return []
